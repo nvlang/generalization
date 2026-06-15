@@ -56,6 +56,8 @@ namespace Digraph
 
 variable {V : Type} [BEq V] [Hashable V]
 
+public def contains (G : Digraph V) (v : V) : Bool := G.adj.contains v
+
 /--
 **Warning:** If called with a vertex that is not in `G`, this will silently
 return the empty array.
@@ -64,7 +66,7 @@ public def succs (G : Digraph V) (v : V) : Array V :=
   G.adj.getD v #[]
 
 public def insertVertex (G : Digraph V) (v : V) : Digraph V :=
-  if G.adj.contains v then G else ⟨G.adj.insert v #[]⟩
+  if G.contains v then G else ⟨G.adj.insert v #[]⟩
 
 /--
 Here, `s` stands for "source vertex" and `t` stands for "target vertex" of the
