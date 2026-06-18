@@ -1,2 +1,3 @@
 import GeneralizationLinter.Basic
 import GeneralizationLinter.Helpers.Digraph
+import GeneralizationLinter.Helpers.Canonicalization
