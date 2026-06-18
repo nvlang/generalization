@@ -7,6 +7,9 @@ module
 
 public import Lean.Expr
 public import Lean.Environment
+public import Lean.Meta.Basic
+public import Lean.Meta.FunInfo
+
 
 /-!
 TODO: Module docstring.
@@ -25,7 +28,7 @@ def x = f 123
 
 -/
 
-open Lean
+open Lean Meta
 
 /--
 As we walk an `Expr` (generally, a telescope), this monad helps us keep track of
@@ -39,7 +42,7 @@ two things:
 **Note:** We have that the next de Bruijn index is always greater than or equal
 to the size of the HashMap. (Note in particular: not necessarily always equal.)
 -/
-public abbrev CanonM := StateM ((Std.HashMap Nat Nat) × Nat)
+public abbrev CanonVarsM := StateT ((Std.HashMap FVarId Nat) × Nat) MetaM
 
 /--
 Extract the codomain (i.e., return type) of the expression, peeling off any `∀`
@@ -80,16 +83,8 @@ partial def codomainOf : Expr → Expr
   | e => e
 
 /--
-#TODO
--/
-partial def binderInfos (e : Expr) (bis : Array BinderInfo := #[]) : Array BinderInfo :=
-  match e with
-  | .forallE _ _ b bi => binderInfos b (bis.push bi)
-  | _ => bis
-
-/--
-`isTypeConstructor env e` is `true` iff `e` is a (possibly nullary) type constructor
-constant in `env`.
+`isTypeConstructor e` is `true` iff `e` is a (possibly nullary) type constructor
+constant.
 
 ### Examples
 
@@ -105,9 +100,22 @@ constant in `env`.
 * Constants that are not type constructors: `And.intro`, `Nat.succ`, etc.
 * Things that are not constants: `3`, `#[3]`, `{}`, `[]`, etc.
 -/
-def isTypeConstructor (env : Environment) : Expr → Bool
-  | .const c _ => (env.find? c).any (codomainOf ·.type |>.isSort)
-  | _          => false
+def isTypeConstructor (e : Expr) : MetaM Bool := do
+  match e with
+  | .const c _ => return ((← getEnv).find? c).any (codomainOf ·.type |>.isSort)
+  | _          => return false
+
+
+
+/--
+Strip the universe levels off of a head constant. This way, universe-polymorphic
+classes canonicalize to the same vertex (e.g., `Module.{u}` vs `Module.{v}`).
+
+Ignoring universe levels in this way is okay in our use-case, because #TODO
+-/
+private def eraseHeadLevels : Expr → Expr
+  | .const c _ => .const c []
+  | e => e
 
 
 /--
@@ -130,16 +138,10 @@ explicitVals env (.bvar 0) #[a, b] -- #[a, b]
 explicitVals env UnknownConst #[a, b] -- #[a, b]
 ```
 -/
-def explicitVals (env : Environment) (fn : Expr) (vals : Array Expr) : Array Expr :=
-  match fn with
-  | .const c _ =>
-    match env.find? c with
-    | some info =>
-      let bis := binderInfos info.type
-      vals.zipIdx.filterMap fun (a, i) =>
-        if (bis[i]?.map (·.isExplicit)).getD true then some a else none
-    | none => vals
-  | _ => vals
+def explicitVals (fn : Expr) (vals : Array Expr) : MetaM (Array Expr) := do
+  let pinfos := (← getFunInfo fn).paramInfo
+  pure <| vals.zipIdx.filterMap fun (a, i) =>
+    if (pinfos[i]?.map (·.isExplicit)).getD true then some a else none
 
 /--
 Canonicalize a single binder/argument.
@@ -153,24 +155,25 @@ Canonicalize a single binder/argument.
 * `Pow α ℕ` → `Pow #0 ℕ`
 * `OfNat α 1` → `OfNat #0 1`
 -/
-public partial def canonArg (env : Environment) (e : Expr) : CanonM Expr := do
-  let e := e.consumeMData
-  match e with -- strip annotations
-  | .bvar n => -- bvars get their index canonicalized
-    let (m, next) ← get -- get state from CanonM
-    match m[n]? with
+public partial def canonArg (e : Expr) : CanonVarsM Expr := do
+  let e ← whnfR e.consumeMData -- strip annotations and reduce to WHNF
+  match e with
+  | .fvar id => -- bvars get their index canonicalized
+    let (m, next) ← get -- get state from CanonVarsM
+    match m[id]? with
     | some k => return .bvar k -- we've seen this bvar before
     | none   => -- new bvar
-      set (m.insert n next, next + 1) -- update CanonM state
+      set (m.insert id next, next + 1) -- update CanonVarsM state
       return .bvar next
   | .lit (.natVal _) => return e -- nat literals are kept as-is
   | _ =>
     let fn := e.getAppFn
-    if isTypeConstructor env fn then
+    if ← isTypeConstructor fn then
       -- If `e` is "f a₁ … aₙ", with "f" a type constructor, then
       -- canonicalize "a₁ … aₙ" to "a₁' … aₙ'" and return "f a₁' … aₙ'".
       -- Note that "f" may be a nullary type constructor, e.g., `Nat`.
-      return mkAppN fn (← (explicitVals env fn e.getAppArgs).mapM (canonArg env))
+      let kept ← explicitVals fn e.getAppArgs
+      return mkAppN (eraseHeadLevels fn) (← kept.mapM canonArg)
     else -- `e` is not function app, or "f" is not a type constructor
       let (m, next) ← get
       set (m, next + 1)
