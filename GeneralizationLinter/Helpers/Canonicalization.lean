@@ -127,15 +127,15 @@ filtered out.
 
 ```
 -- And : Prop → Prop → Prop
-explicitVals env And #[True, False] -- #[True, False]
+explicitVals And #[True, False] -- #[True, False]
 -- Eq : {α} → α → α → Prop
-explicitVals env Eq #[Nat, a, b] -- #[a, b]
+explicitVals Eq #[Nat, a, b] -- #[a, b]
 -- C : (α) → [Inst α] → Type
-explicitVals env C #[Nat, inst] -- #[Nat]
+explicitVals C #[Nat, inst] -- #[Nat]
 -- Non-`.const` head
-explicitVals env (.bvar 0) #[a, b] -- #[a, b]
+explicitVals (.bvar 0) #[a, b] -- #[a, b]
 -- Unknown constant (not in `env`)
-explicitVals env UnknownConst #[a, b] -- #[a, b]
+explicitVals UnknownConst #[a, b] -- #[a, b]
 ```
 -/
 def explicitVals (fn : Expr) (vals : Array Expr) : MetaM (Array Expr) := do
