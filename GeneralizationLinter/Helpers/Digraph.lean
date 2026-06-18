@@ -138,28 +138,28 @@ public structure Condensation (V : Type u) [BEq V] [Hashable V] where
   /-- Maps an index to the array of vertices contained in the SCC corresponding to the index. -/
   members : HashMap Nat (Array V)
   /-- Maps a vertex to the index of its parent SCC. -/
-  componentOf : HashMap V Nat
+  componentsMap : HashMap V Nat
 
 /-- Condense digraph `G` into DAG of SCCs of `G`, returned as a `Condensation` structure. -/
 public def condense (G : Digraph V) : Condensation V :=
-  let (members, componentOf) := G.sccs.foldl
+  let (members, componentsMap) := G.sccs.foldl
     (init := (({} : HashMap Nat (Array V)), ({} : HashMap V Nat)))
-    fun (members', componentOf') comp =>
+    fun (members', componentsMap') comp =>
       let idx := members'.size
       (
         members'.insert idx comp,
-        comp.foldl (init := componentOf') fun componentOf' v => componentOf'.insert v idx
+        comp.foldl (init := componentsMap') fun componentsMap' v => componentsMap'.insert v idx
       )
   let graph : Digraph Nat := G.adj.fold (init := ({} : Digraph Nat)) fun graph' s ts =>
-    let idx_s := componentOf.getD s 0 -- idx_s is the index of the SCC containing vertex s
+    let idx_s := componentsMap.getD s 0 -- idx_s is the index of the SCC containing vertex s
     ts.foldl (init := graph'.insertVertex idx_s) fun graph'' t =>
-      let idx_t := componentOf.getD t 0
+      let idx_t := componentsMap.getD t 0
       if idx_s == idx_t then graph'' else graph''.insertEdge idx_s idx_t
-  { graph, members, componentOf }
+  { graph, members, componentsMap }
 
 /-- Indices of SCCs containing the vertices `vs`. -/
 public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
-  vs.fold (init := {}) fun indices v => match c.componentOf[v]? with
+  vs.fold (init := {}) fun indices v => match c.componentsMap[v]? with
     | some idx => indices.insert idx
     | none     => indices
 
@@ -172,7 +172,7 @@ before ever calling `meet`, and then passed to all subsequent calls of `meet`.
 public def meet (c : Condensation V)
     (down_sets : HashMap Nat (HashSet Nat))
     (query : HashSet V) : Array Nat :=
-  if query.size == 0 || !query.all (c.componentOf.contains ·) then #[]
+  if query.size == 0 || !query.all (c.componentsMap.contains ·) then #[]
   else
     let query_indices := indicesOf c query
     -- keep vertex v iff `query_indices ⊆ down_set_of_v`
