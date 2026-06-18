@@ -114,7 +114,7 @@ public def postorder (G : Digraph V) : Array V :=
 /-- Transpose of `G`. See also: https://en.wikipedia.org/wiki/Transpose_graph -/
 public def transpose (G : Digraph V) : Digraph V :=
   G.adj.fold (init := {}) fun G' s ts =>
-    ts.foldl (init := G'.insertVertex s) fun G'' t => G''.insertEdge s t
+    ts.foldl (init := G'.insertVertex s) fun G'' t => G''.insertEdge t s
 
 /--
 Strongly-connected components of `G`, computed with Kosaraju–Sharir's algorithm.
