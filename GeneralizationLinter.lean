@@ -1,3 +1,5 @@
 import GeneralizationLinter.Basic
 import GeneralizationLinter.Helpers.Digraph
+import GeneralizationLinter.Helpers.ClassDag
 import GeneralizationLinter.Helpers.Canonicalization
+import GeneralizationLinter.Helpers.ClassApp
