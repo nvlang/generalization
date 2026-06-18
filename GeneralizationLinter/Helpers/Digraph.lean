@@ -172,13 +172,15 @@ before ever calling `meet`, and then passed to all subsequent calls of `meet`.
 public def meet (c : Condensation V)
     (down_sets : HashMap Nat (HashSet Nat))
     (query : HashSet V) : Array Nat :=
-  let query_indices := indicesOf c query
-  -- keep vertex v iff `query_indices ⊆ down_set_of_v`
-  let common_ancestors := c.graph.vertices.filter fun v =>
-    let down_set := down_sets.getD v {}
-    query_indices.all fun idx => down_set.contains idx
-  -- keep vertex v iff (common_ancestors ∩ down_set_of_v = {v})
-  common_ancestors.filter fun v =>
-    let down_set := down_sets.getD v {}
-    ¬ common_ancestors.any fun v' =>
-      v' != v && down_set.contains v'
+  if query.size == 0 || !query.all (c.componentOf.contains ·) then #[]
+  else
+    let query_indices := indicesOf c query
+    -- keep vertex v iff `query_indices ⊆ down_set_of_v`
+    let common_ancestors := c.graph.vertices.filter fun v =>
+      let down_set := down_sets.getD v {}
+      query_indices.all fun idx => down_set.contains idx
+    -- keep vertex v iff (common_ancestors ∩ down_set_of_v = {v})
+    common_ancestors.filter fun v =>
+      let down_set := down_sets.getD v {}
+      ¬ common_ancestors.any fun v' =>
+        v' != v && down_set.contains v'
