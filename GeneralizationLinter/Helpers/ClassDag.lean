@@ -15,7 +15,7 @@ public import GeneralizationLinter.Helpers.Canonicalization
 TODO: Module docstring.
 -/
 
-open Lean
+open Lean Meta
 
 public structure ClassDag.Vertex where
   /--
@@ -59,6 +59,6 @@ public def splitForalls (e : Expr)
   | .forallE n t body bi => splitForalls body (acc.push (n, bi, t))
   | _ => (acc, e)
 
-public def extractEdge? (name : Name) : Meta.MetaM (Option (Vertex × Vertex)) := sorry
+public def extractEdge? (name : Name) : MetaM (Option (Vertex × Vertex)) := sorry
 
 public def buildClassDag : MetaM ClassDag := sorry
