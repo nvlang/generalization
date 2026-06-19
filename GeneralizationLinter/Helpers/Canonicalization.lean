@@ -33,9 +33,9 @@ open Lean Meta
 /--
 As we walk an `Expr` (generally, a telescope), this monad helps us keep track of
 two things:
-* `HashMap Nat Nat`: For each `bvar n` (where `n` is some natural number
-  literal) we encounter in the expression we're parsing, we add an entry `n → k`
-  to this map to note to which canonical `bvar k` we've mapped `bvar n`.
+* `HashMap FVarId Nat`: For each `fvar id` (where `id` is some `FVarId`) we
+  encounter in the expression we're parsing, we add an entry `id → k` to this
+  map to note to which canonical `bvar k` we've mapped `fvar id`.
 * `Nat`: This keeps track of what the next de Bruijn index is that we should use
   when creating a new canonical bvar.
 
