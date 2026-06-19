@@ -139,6 +139,8 @@ public structure Condensation (V : Type u) [BEq V] [Hashable V] where
   members : HashMap Nat (Array V)
   /-- Maps a vertex to the index of its parent SCC. -/
   componentsMap : HashMap V Nat
+  /-- Maps an index to its corresponding down-set. -/
+  downSetsByIndex : Std.HashMap Nat (Std.HashSet Nat)
 
 /-- Condense digraph `G` into DAG of SCCs of `G`, returned as a `Condensation` structure. -/
 public def condense (G : Digraph V) : Condensation V :=
@@ -155,7 +157,7 @@ public def condense (G : Digraph V) : Condensation V :=
     ts.foldl (init := graph'.insertVertex idx_s) fun graph'' t =>
       let idx_t := componentsMap.getD t 0
       if idx_s == idx_t then graph'' else graph''.insertEdge idx_s idx_t
-  { graph, members, componentsMap }
+  { graph, members, componentsMap, downSetsByIndex := graph.downSets }
 
 /-- Indices of SCCs containing the vertices `vs`. -/
 public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
@@ -165,22 +167,18 @@ public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
 
 /--
 Compute the meet of the vertices in `query`.
-
-Note: To avoid duplication of work, `down_sets` should be precomputed once,
-before ever calling `meet`, and then passed to all subsequent calls of `meet`.
 -/
 public def meet (c : Condensation V)
-    (down_sets : HashMap Nat (HashSet Nat))
     (query : HashSet V) : Array Nat :=
   if query.size == 0 || !query.all (c.componentsMap.contains ·) then #[]
   else
     let query_indices := indicesOf c query
     -- keep vertex v iff `query_indices ⊆ down_set_of_v`
     let common_ancestors := c.graph.vertices.filter fun v =>
-      let down_set := down_sets.getD v {}
+      let down_set := c.downSetsByIndex.getD v {}
       query_indices.all fun idx => down_set.contains idx
     -- keep vertex v iff (common_ancestors ∩ down_set_of_v = {v})
     common_ancestors.filter fun v =>
-      let down_set := down_sets.getD v {}
+      let down_set := c.downSetsByIndex.getD v {}
       ¬ common_ancestors.any fun v' =>
         v' != v && down_set.contains v'
