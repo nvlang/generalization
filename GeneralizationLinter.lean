@@ -1,6 +1,7 @@
 import GeneralizationLinter.Basic
 import GeneralizationLinter.Core.Linter
 import GeneralizationLinter.Core.Options
+import GeneralizationLinter.Helpers.Coalescence
 import GeneralizationLinter.Helpers.Digraph
 import GeneralizationLinter.Helpers.ClassDag
 import GeneralizationLinter.Helpers.Canonicalization
