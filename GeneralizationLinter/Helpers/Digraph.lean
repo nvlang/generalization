@@ -22,7 +22,7 @@ by the generalization linter.
 
 * `Digraph`: Implemented as an adjacency list.
 * `Condensation`: Condensation of digraph into DAG of SCCs.
-* `minCommonAncestors`: The meet, roughly speaking.
+* `minCommonAncestors`: Find the least upper bounds.
 
 ---
 **References**
@@ -109,10 +109,9 @@ public def insertEdge (G : Digraph V) (s : V) (t : V) : Digraph V :=
 /--
 Depth-first search to compute transitive closure of `v` under `G`.
 
-**Note:** If `G` is acyclic, then the list that this returns will be
-topologically sorted.
-* `acc` is an array that will eventually contain all vertices reachable from `v`,
-  including `v` itself, in postorder.
+* `acc` is an array that will eventually contain all vertices reachable from
+  `v`, including `v` itself. If `G` is acyclic, this list will be returned in
+  postorder.
 * `vis` is the set of visited vertices. It will eventually also contain all
   vertices reachable from `v`, including `v` itself.
 -/
@@ -194,7 +193,7 @@ public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
     | some idx => indices.insert idx
     | none     => indices
 
-/-! ### Meet -/
+/-! ### Least Upper Bounds -/
 
 /--
 Establishes how `minCommonAncestors` should handle inputs that are unexpectedly
@@ -246,19 +245,18 @@ all of these classes:
 ---
 **Examples**
 
-* **Unique minimal common ancestor:** Not infrequently, there is exactly one
-  minimal common ancestor.
+* **Unique minimal common ancestor:** Sometimes, there is exactly one minimal
+  common ancestor.
 
   ```
   minCommonAncestors #[{Monoid}, {CommSemigroup}] = #[#[CommMonoid]]
   ```
 
 * **No common ancestors:** Quite often, there may not exist any class which
-  satisfies all the given requirements. In these cases, `commonAncestorBlocks`
-  will help us out.
+  satisfies all the given requirements.
 
   ```
-  minCommonAncestors #[{Mul}, {Neg}] = #[]
+  minCommonAncestors #[{Inv}, {SDiff}] = #[]
   ```
 
 * **Minimal common ancestors of single classes:** Within an SCC of the class
@@ -277,9 +275,9 @@ all of these classes:
 
   ```
   minCommonAncestors #[{Add}, {Mul}] = #[
-    #[Distrib],
-    #[Lean.Grind.Semiring],
     #[FirstOrder.Language.Structure]
+    #[Lean.Grind.Semiring],
+    #[Distrib],
   ]
   ```
 -/
@@ -338,12 +336,12 @@ returns `true` iff `v` is not a data-carrying class.
   `[MulOneClass α]` can nonetheless not split the `Monoid` hypothesis up,
   because the instances of `Mul` that `Semigroup` and `MulOneClass` each use
   would not guaranteed to be the same anymore.
-* `sharesDataDesc` would return `false` for `IsPreorder` and `IsTotal`, since
+* `sharesDataDesc` would return `false` for `IsPreorder` and `Std.Total`, since
   those two classes only share the non-data-carrying descendant `Std.Refl`. This
   means that a theorem with hypothesis `[IsLinearOrder α]` but which uses only
-  `[IsPreorder α]` and `[IsTotal α]` could safely split the `IsLinearOrder`
+  `[IsPreorder α]` and `[Std.Total α]` could safely split the `IsLinearOrder`
   hypothesis up, because the instances of `Std.Refl` that `IsPreorder` and
-  `IsTotal` each use are guaranteed to be equal due to proof irrelevance.
+  `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
 -/
 public def sharesDataDesc (c : Condensation V) (ignore : V → Bool) (x y : V) : Bool :=
   match c.componentsMap[x]?, c.componentsMap[y]? with
