@@ -3,6 +3,6 @@ import GeneralizationLinter.Core.Linter
 import GeneralizationLinter.Core.Options
 import GeneralizationLinter.Helpers.Coalescence
 import GeneralizationLinter.Helpers.Digraph
-import GeneralizationLinter.Helpers.ClassDag
+import GeneralizationLinter.Helpers.ClassGraph
 import GeneralizationLinter.Helpers.Canonicalization
-import GeneralizationLinter.Helpers.ClassApp
+import GeneralizationLinter.Helpers.Vertex
