@@ -368,3 +368,13 @@ public def partitionByDesc (c : Condensation V)
     (used : Std.HashSet V) (ignore : V → Bool) : Array (Std.HashSet V) :=
   Coalescence.coalesce (fun a b => a.any fun x => b.any (c.sharesDataDesc ignore x))
     (used.toArray.map fun v => {v})
+
+/--
+Given the condensation of a graph and two vertices `s` and `t` of the graph
+(pre-condensation), returns whether `s` reaches `t` in the graph
+(pre-condensation).
+-/
+public def reaches (c : Condensation V) (s t : V) : Bool :=
+  match c.componentsMap[s]?, c.componentsMap[t]? with
+  | some s_idx, some t_idx => (c.downSetsByIndex.getD s_idx {}).contains t_idx
+  | _, _ => false
