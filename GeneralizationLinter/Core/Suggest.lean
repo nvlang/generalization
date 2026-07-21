@@ -54,7 +54,7 @@ See also:
 * `Vertex.pattern`
 * `keySlots`
 -/
-private def patArity (v : Vertex) : Nat := v.pattern.size
+def patArity (v : Vertex) : Nat := v.pattern.size
 
 /-- Everything `suggest` needs to produce its answers, compiled in one str ucture. -/
 private structure MeetContext where
@@ -68,7 +68,7 @@ private structure MeetContext where
   includeSubsumers : Bool
 
 /-- Returns `true` iff `u` reaches `v` in `ctx.graph`. -/
-private def MeetContext.reachesV (ctx : MeetContext) (u v : Vertex) : Bool :=
+def MeetContext.reachesV (ctx : MeetContext) (u v : Vertex) : Bool :=
   (u.matchingVertices ctx.includeSubsumers).any fun u' =>
     (v.matchingVertices ctx.includeSubsumers).any fun v' => ctx.graph.condensation.reaches u' v'
 
@@ -133,7 +133,7 @@ where
     | a, b => if a == b then some σ else none
 
 /-- Return the data descendants of `v` in `ctx.graph` as an array `Array Vertex`. -/
-private def MeetContext.dataDescendants (ctx : MeetContext) (v : Vertex) : Array Vertex :=
+def MeetContext.dataDescendants (ctx : MeetContext) (v : Vertex) : Array Vertex :=
   let cond := ctx.graph.condensation
   match cond.componentsMap[v]? with
   | none => #[]
@@ -174,7 +174,7 @@ _See also:_ [best2023automaticallyGeneralizingTheorems].
   the `IsLinearOrder` hypothesis up, because the instances of `Std.Refl` that `IsPreorder` and
   `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
 -/
-private def MeetContext.sharesDataDesc (ctx : MeetContext) (u v : Vertex) : Bool :=
+def MeetContext.sharesDataDesc (ctx : MeetContext) (u v : Vertex) : Bool :=
   (u.matchingVertices ctx.includeSubsumers).any fun u' =>
     let descsᵤ := ctx.dataDescendants u'
     (v.matchingVertices ctx.includeSubsumers).any fun v' =>
@@ -182,7 +182,7 @@ private def MeetContext.sharesDataDesc (ctx : MeetContext) (u v : Vertex) : Bool
       descsᵤ.any fun dᵤ => descsᵥ.any (Vertex.unifiable dᵤ ·)
 
 /-- We forbid pattern-arity-increasing weakening suggestions, so  -/
-private def MeetContext.filterReqVerts (ctx : MeetContext) (binderPatternArity : Nat)
+def MeetContext.filterReqVerts (ctx : MeetContext) (binderPatternArity : Nat)
     (reqVerts : HashSet Vertex) : Array Vertex :=
   let byArity := reqVerts.toArray.filter (fun v => patArity v == binderPatternArity)
   byArity.filter fun u =>
@@ -192,7 +192,7 @@ private def MeetContext.filterReqVerts (ctx : MeetContext) (binderPatternArity :
 Returns the meet of `reqs` in `ctx.graph.condensation`, if a unique meet exists. Otherwise, returns
 `none`.
 -/
-private def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vertex) :
+def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vertex) :
     Option Vertex :=
   -- De-duplicate, and include vertices that match requirements too if `includeSubsumers` is `true`,
   -- converting `reqs` into an array of sets, which will be interpreted by `minCommonAncestors` as
@@ -212,7 +212,7 @@ private def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Ar
   -- so it should be considered a low-priority opportunity for future work.
 
 /-- Is `v` strictly weaker than `b` according to `ctx.graph`? -/
-private def MeetContext.strictlyWeaker (ctx : MeetContext) (b : TargetedBinder) (v : Vertex) :
+def MeetContext.strictlyWeaker (ctx : MeetContext) (b : TargetedBinder) (v : Vertex) :
     Bool :=
   let bVertex := b.toVertex
   v != bVertex && ctx.reachesV bVertex v && ¬ ctx.reachesV v bVertex
@@ -223,7 +223,7 @@ array, or `none` if `reqs` can't be split up, or if any of the blocks don't have
 of the blocks have multiple "meets", or if any of the blocks' meets are not strictly weaker than `b`
 (in which case we'd be e.g. replacing `[Group G]` with `[Group G] […]`, which would be pointless).
 -/
-private def MeetContext.splitMeets (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vertex) :
+def MeetContext.splitMeets (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vertex) :
     Option (Array Vertex) := Id.run do
   let blocks := partitionByDesc (HashSet.ofArray reqs) ctx.sharesDataDesc
   if blocks.size ≤ 1 then return none -- If `reqs` can't be split up, return `none`.
@@ -243,7 +243,7 @@ This returns
 * `none` to indicate that `b` can't be weakened within `ctx.graph` under the constraints defined by
   `ctx.splitPolicy`, `ctx.absencePolicy`, and `ctx.includeSubsumers`.
 -/
-private def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
+def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option (Array Vertex) :=
   if reqVerts.isEmpty then some #[] else
   let singleClass? : Option Vertex := (ctx.meet b reqVerts).filter (ctx.strictlyWeaker b)
@@ -264,7 +264,7 @@ private def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (r
     | none, none => none
 
 /-- Reify `v` into a `Key` using the `subst` args from `b`. -/
-private def reifyVert (b : TargetedBinder) (v : Vertex) : Key :=
+def reifyVert (b : TargetedBinder) (v : Vertex) : Key :=
   { toVertex := v, subst := b.subst }
 
 /-- TODO -/

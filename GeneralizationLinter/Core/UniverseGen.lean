@@ -27,7 +27,7 @@ public def pinnedTypeBinders (type : Expr) : MetaM (Array PinnedBinder) :=
           if k ≥ 1 then out := out.push ⟨i, d.userName, k⟩
     return out
 
-private def freshLevelParams (taken : List Name) (n : Nat) : Array Name := Id.run do
+def freshLevelParams (taken : List Name) (n : Nat) : Array Name := Id.run do
   let mut acc : Array Name := #[]
   let mut taken := taken
   for _ in [0:n] do
@@ -38,7 +38,7 @@ private def freshLevelParams (taken : List Name) (n : Nat) : Array Name := Id.ru
     taken := u :: taken
   return acc
 
-private def editedGroup? (g : Syntax) (tyNode : Syntax) : Option Syntax := do
+def editedGroup? (g : Syntax) (tyNode : Syntax) : Option Syntax := do
   unless g.getKind == ``Parser.Term.explicitBinder || g.getKind == ``Parser.Term.implicitBinder
       || g.getKind == ``Parser.Term.strictImplicitBinder do failure
   if g.getKind == ``Parser.Term.explicitBinder && !(g.getArg 3).getArgs.isEmpty then failure
@@ -48,7 +48,7 @@ private def editedGroup? (g : Syntax) (tyNode : Syntax) : Option Syntax := do
   unless tySpec.getArgs.size ≥ 2 do failure
   return g.setArg 2 (tySpec.setArg 1 tyNode)
 
-private def generalizedSigStx? (declSig : Syntax) (edits : Array (Name × Syntax)) : Option Syntax := do
+def generalizedSigStx? (declSig : Syntax) (edits : Array (Name × Syntax)) : Option Syntax := do
   let concl := (declSig.getArg 1).getArg 1
   let mut hits := 0
   let mut binders : Array Syntax := #[]

@@ -302,7 +302,7 @@ answers the following question:
   `.bvar 3`, respectively.
 * For the purposes of this docstring, leaving an argument as-is does not count as an abstraction.
 -/
-private def bvarChoices (bvarColors : Array Expr) (color : Expr) : List (Expr × Array Expr) :=
+def bvarChoices (bvarColors : Array Expr) (color : Expr) : List (Expr × Array Expr) :=
   (bvarColors.toList.zipIdx.filterMap fun (c, k) =>
     if c == color then some (.bvar k, bvarColors) else none)
   ++ [(.bvar bvarColors.size, bvarColors.push color)]
@@ -364,7 +364,7 @@ If `i ≤ 8`, then `bell[i]` is the `i`th Bell number. If `i > 8`, then `bell[i]
 Mathematically speaking, the $i$th Bell number is the number of possible partitions of a set of $i$
 elements.
 -/
-private def bell (n : Nat) : Nat := #[1, 1, 2, 5, 15, 52, 203, 877, 4140].getD n (1 <<< 32)
+def bell (n : Nat) : Nat := #[1, 1, 2, 5, 15, 52, 203, 877, 4140].getD n (1 <<< 32)
 
 /--
 The number of possible subsumers of an expression. If the expression is an application, then this
@@ -401,7 +401,7 @@ $$
   \geq |\texttt{subsumers}(\texttt{args})|
 $$
 -/
-private def enumBudget (args : Array Expr) : Nat :=
+def enumBudget (args : Array Expr) : Nat :=
   let shapes := args.foldl (init := 1) fun shapes' arg => shapes' * shapeCount arg
   let merges := (colorMults args).fold (init := 1) fun merges' _ k => merges' * bell k
   shapes * merges

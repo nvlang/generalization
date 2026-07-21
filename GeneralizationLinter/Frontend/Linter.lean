@@ -35,7 +35,7 @@ namespace GeneralizationLinter.Frontend
 Returns true if `type` has ≥1 binders that are targeted by the typeclass linter (under the given
 configuration).
 -/
-private def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
+def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
   let opts ← getOptions
   let implicit := opts.getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
   let rec go : Expr → MetaM Bool
@@ -47,7 +47,7 @@ private def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
   go type
 
 /-- Helper to pretty-print a candidate. -/
-private def binderDisplay (const : ConstantInfo) (c : Candidate) : MetaM String :=
+def binderDisplay (const : ConstantInfo) (c : Candidate) : MetaM String :=
   targetedBinderTelescope const.type fun lds _ => do
     match lds[c.binder.idx]? with
     | some ld => return toString (← Meta.ppExpr (← whnf ld.type))
@@ -61,7 +61,7 @@ public def classBinderBracket : BinderInfo → String → String
   | _, s => s!"[{s}]"
 
 /-- Helper to print suggestion according to candidate's `WeakeningShape`. -/
-private def describeTarget (c : Candidate) : String :=
+def describeTarget (c : Candidate) : String :=
   match c.shape with
   | .drop => "removed (dropped)"
   | .weaken t => s!"weakened to `{t.toVertex.name}`"
@@ -69,7 +69,7 @@ private def describeTarget (c : Candidate) : String :=
       ", ".intercalate (ts.toList.map (fun t => s!"`{t.toVertex.name}`"))
 
 /-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
-private def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
+def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
     TermElabM Unit :=
   withOptions (fun _ => opts) <|
     withTheReader Core.Context (fun c => { c with maxHeartbeats := heartbeats }) <|
@@ -79,7 +79,7 @@ private def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermEl
 If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just
 run `x` with the existing `maxHeartbeats`.
 -/
-private def withDeclBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
+def withDeclBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
     TermElabM α := do
   if budget == 0 then return ← x
   let ambient := (← readThe Core.Context).maxHeartbeats
@@ -90,7 +90,7 @@ private def withDeclBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM
     (fun _ => pure dflt)
 
 /-- Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied. -/
-private def wrapperEffectiveOptions? (wrappers : Array Syntax) :
+def wrapperEffectiveOptions? (wrappers : Array Syntax) :
     CommandElabM (Option Options) := do
   -- `elabSetOption` modifies infotrees of `CommandElabM`, so we snapshot `InfoState` here and roll
   -- back to it after setting the options.
@@ -118,7 +118,7 @@ private def wrapperEffectiveOptions? (wrappers : Array Syntax) :
 Run the typeclass linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
 whose value is described by syntax tree `bodyStx`.
 -/
-private def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
+def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (bodyStx : Syntax) (declName : Name) : TermElabM Unit := do
   for gw in ← withDeclBudget cfg.perDeclHeartbeats #[] (gradedWeakenings cfg graph const bodyStx) do
     let c := gw.candidate
@@ -137,7 +137,7 @@ private def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const 
 Run the universe linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
 whose value is described by syntax tree `bodyStx`.
 -/
-private def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
+def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
     (declCmd bodyStx : Syntax) (wrappers : Array Syntax) (declName : Name) : TermElabM Unit := do
   let some declSig := declCmd.find? (·.isOfKind ``Parser.Command.declSig) | return
   let mut failed : Array PinnedBinder := #[]

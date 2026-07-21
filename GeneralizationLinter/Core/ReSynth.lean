@@ -16,7 +16,7 @@ namespace GeneralizationLinter
 -/
 
 /-- Wrapper around `reifyClass` that adds support for family class binders. -/
-private def replaceBinderType (oldType : Expr) (replacement : Name) : MetaM (Option Expr) := do
+def replaceBinderType (oldType : Expr) (replacement : Name) : MetaM (Option Expr) := do
   -- If `oldType` reduces to a family binder `∀ prefixes, body` (where `body` is a class
   -- application), then deconstruct (i.e., telescope) `oldType`, reify the replacement class in
   -- `body`, and reconstruct (`mkForallFVars`) the family binder with the new body `body'`.
@@ -29,7 +29,7 @@ private def replaceBinderType (oldType : Expr) (replacement : Name) : MetaM (Opt
   else reifyClass replacement (← frameArgs oldType)
 
 /-- Does `e` have any fvar that is contained in `stale`? -/
-private def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
+def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
   e.hasAnyFVar stale.contains
 
 mutual
@@ -201,7 +201,7 @@ public def getNthTargetedBinder (fvars : Array Expr) (n : Nat) : MetaM (Option (
 Remove the local instance with `FVarId` `drop` from the context, run `act`, then restore the
 context.
 -/
-private def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α :=
+def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α :=
   withReader (fun ctx => { ctx with
     localInstances := ctx.localInstances.filter (·.fvar.fvarId! != drop) }) act
 
@@ -219,7 +219,7 @@ Parameters:
     == 1`, then a map from `tb` to `replacements[0]`.
   * The array of new replacement binder `Expr`s that were built.
 -/
-private def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Name)
+def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Name)
     (k : HashMap FVarId Expr → Array Expr → MetaM (Option α)) : MetaM (Option α) := do
   let oldDecl ← tb.getDecl
   let userName := oldDecl.userName
@@ -233,7 +233,7 @@ private def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Arr
     else k remap newBinders
   go 0 {} #[]
 
-private def staleSets (oldFV : FVarId) (post : Array Expr) : HashSet FVarId × HashSet FVarId :=
+def staleSets (oldFV : FVarId) (post : Array Expr) : HashSet FVarId × HashSet FVarId :=
   let staleW := {oldFV}
   (staleW, post.foldl (init := staleW) (·.insert ·.fvarId!))
 

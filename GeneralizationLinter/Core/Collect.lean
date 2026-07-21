@@ -495,7 +495,7 @@ private abbrev CollectM := StateRefT (Array MIChain) MetaM
 Returns `some head` if `head` should be propagated through a descent step, or `none` if it
 shouldn't. If it shouldn't, that means `collect` will drop the chain and start a new one.
 -/
-private def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) :
+def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) :
     MetaM (Option Key) := do
   let srcT ← whnf (← inferType src)
   -- Transformation carriers must be a subset of the source's carriers, otherwise the transformation

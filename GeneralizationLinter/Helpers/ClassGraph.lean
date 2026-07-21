@@ -170,7 +170,7 @@ HasLimitsOfShape (Discrete PEmpty) α  → {Discrete}
 QuasiFinite α (OreLocalization β γ)   → {OreLocalization}
 ```
 -/
-private def structuredPatternHeads (v : Vertex) : HashSet Name :=
+def structuredPatternHeads (v : Vertex) : HashSet Name :=
   v.pattern.foldl (init := {}) fun s e =>
     if e.getAppArgs.isEmpty then s
     else match e.getAppFn.constName? with

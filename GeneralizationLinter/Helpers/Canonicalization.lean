@@ -291,7 +291,7 @@ public def toVertex (e : Expr) : MetaM Vertex := return (← toKey e).toVertex
 /--
 TODO
 -/
-private def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
+def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
   let some const := (← getEnv).find? name | return none
   let levels ← mkFreshLevelMVars const.numLevelParams
   return some (mkConst name levels, const.type.instantiateLevelParams const.levelParams levels)

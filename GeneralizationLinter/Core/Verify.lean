@@ -45,7 +45,7 @@ public structure ConfirmedWeakening where
 Return the conclusion of a declaration with type `declType` as a `Key`, wrapped as an `Option`.
 If the conclusion isn't a class application, then `none` is returned.
 -/
-private def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
+def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
   forallTelescope declType fun _ concl => do
     if (← isClass? concl).isSome then
       (try some <$> toKey (← whnf concl) catch _ => return none)
@@ -54,7 +54,7 @@ private def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
 /--
 TODO: example
 -/
-private def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate) :
+def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate) :
     Array Candidate :=
   match concl? with
   -- If conclusion is not a class app, then there's no risk of a weakening targeting it, since our
