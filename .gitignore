@@ -1,6 +1,7 @@
 .lake
 .DS_Store
 _*.lean
+_*
 resources-for-agents
 .claude
 graph-export
