@@ -7,7 +7,6 @@ module
 
 public import Std.Data.HashMap.Basic
 public import Std.Data.HashSet.Basic
-public import GeneralizationLinter.Helpers.Coalescence
 
 namespace GeneralizationLinter
 
@@ -34,7 +33,7 @@ by the generalization linter.
 
 -/
 
-open Std
+open Std (HashMap HashSet)
 
 /--
 Directed graph with vertices of type V, implemented through an adjacency list
@@ -163,7 +162,9 @@ public structure Condensation (V : Type u) [BEq V] [Hashable V] where
   /-- Maps a vertex to the index of its parent SCC. -/
   componentsMap : HashMap V Nat
   /-- Maps an index to its corresponding down-set. -/
-  downSetsByIndex : Std.HashMap Nat (Std.HashSet Nat)
+  downSetsByIndex : HashMap Nat (HashSet Nat)
+  /-- `graph.vertices`, cached inside `condense`. -/
+  vertices : Array Nat
 
 /--
 Condense digraph `G` into DAG of SCCs of `G` and return the result as a
@@ -183,7 +184,7 @@ public def condense (G : Digraph V) : Condensation V :=
     ts.foldl (init := graph'.insertVertex idx_s) fun graph'' t =>
       let idx_t := componentsMap.getD t 0
       if idx_s == idx_t then graph'' else graph''.insertEdge idx_s idx_t
-  { graph, members, componentsMap, downSetsByIndex := graph.downSets }
+  { graph, members, componentsMap, downSetsByIndex := graph.downSets, vertices := graph.vertices }
 
 namespace Condensation
 
@@ -197,7 +198,7 @@ public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
 
 /--
 Establishes how `minCommonAncestors` should handle inputs that are unexpectedly
-not vertices of the given condensation. Technically, this should never happen.
+not vertices of the given condensation.
 -/
 public inductive AbsencePolicy
   /-- Return an empty array. (Default.) -/
@@ -207,71 +208,67 @@ public inductive AbsencePolicy
   deriving BEq, Repr
 
 /--
-**Idea:** Given the set of classes that a theorem uses, find the least upper
-bound of that set in the class DAG, i.e., the weakest common ancestor of the
-elements of the set.
+**Idea:** Given the set of classes that a theorem uses, find the minimal common ancestor of that set
+in the class DAG, i.e., the weakest common ancestor of the elements of the set (i.e., their _meet_),
+if a unique one exists. The class DAG is not a lattice, however, so the meet is not guaranteed to
+exist. In those cases, an antichain of incomparable answers is returned.
+
 
 ---
 **Implementation notes**
 
-The set of used classes is given as an array (`requirements`) of smaller sets.
-Currently, these smaller sets are usually singletons, except for used classes
-that are not universe polymorphic. In those cases, the corresponding smaller set
-consists of the used class with the specific universe level, and the
-universe-polymorphic version of the used class.
+The set of used classes is given as an array (`requirements`) of smaller sets. Currently, these
+smaller sets are usually singletons, except for used classes that are not universe polymorphic. In
+those cases, the corresponding smaller set consists of the used class with the specific universe
+level, and the universe-polymorphic version of the used class.
 
-The idea is that the array of smaller sets communicates the requirements as a
-general _AND of ORs._ Let's call each smaller set a set of _witnesses_. The
-question then becomes:
+The idea is that the array of smaller sets communicates the requirements as a general _AND of ORs._
+Let's call each smaller set a set of _witnesses_. The question then becomes:
 
-> Find a class that is a common ancestor to at least one witness of each
-requirement (i.e., a common ancestor of at least one transversal of the sets of
-witnesses).
+> Find a class that is a common ancestor to at least one witness of each requirement (i.e., a common
+ancestor of at least one transversal of the sets of witnesses).
 
-The answer is returned as an array of arrays. Any element of any of the inner
-arrays is a class which satisfies, on its own, all the given requirements. The
-structure within which the classes are given encodes the relationships between
-all of these classes:
+The answer is returned as an array of arrays. Any element of any of the inner arrays is a class
+which satisfies, on its own, all the given requirements. The structure within which the classes are
+given encodes the relationships between all of these classes:
 
-* All classes within each inner array are mutually equipotent. Each inner array
-  therefore represents a single SCC of the class graph pre-condensation (or,
-  equivalently, a single vertex in the class _DAG_, i.e., in the condensation of
-  the class graph).
-* The SCCs listed in the outer array are pairwise unreachable in the class
-  graph. Alternatively, roughly speaking, the outer array represents the
-  _antichain_ of vertices of the class DAG which satisfy the requirements. More
-  precisely,
+* All classes within each inner array are mutually equipotent. Each inner array therefore represents
+  a single SCC of the class graph pre-condensation (or, equivalently, a single vertex in the class
+  _DAG_, i.e., in the condensation of the class graph).
+* The SCCs listed in the outer array are pairwise unreachable in the class graph. Alternatively,
+  roughly speaking, the outer array represents the _antichain_ of vertices of the class DAG which
+  satisfy the requirements. More precisely, each of these vertices is a bona-fide minimal common
+  ancestor; it's just that minimality doesn't generally imply uniqueness in our case, since the
+  class DAG is not a lattice.
 
 ---
 **Examples**
 
-* **Unique minimal common ancestor:** Sometimes, there is exactly one minimal
-  common ancestor.
+* **Unique minimal common ancestor:** Sometimes, there is exactly one minimal common ancestor.
 
   ```
   minCommonAncestors #[{Monoid}, {CommSemigroup}] = #[#[CommMonoid]]
   ```
 
-* **No common ancestors:** Quite often, there may not exist any class which
-  satisfies all the given requirements.
+* **No common ancestors:** Quite often, there may not exist any class which satisfies all the given
+  requirements.
 
   ```
   minCommonAncestors #[{Inv}, {SDiff}] = #[]
   ```
 
-* **Minimal common ancestors of single classes:** Within an SCC of the class
-  graph (pre-condensation), all classes are pairwise equipotent. This means that
-  any element of the SCC is a minimal common ancestor of any other element or
-  subset of the SCC. Note that the vast majority of the SCCs of the class graph
-  (pre-condensation) are singletons.
+* **Minimal common ancestors of single classes:** Within an SCC of the class graph
+  (pre-condensation), all classes are pairwise equipotent. This means that any element of the SCC is
+  a minimal common ancestor of any other element or subset of the SCC. Note that the vast majority
+  of the SCCs of the class graph (pre-condensation) are singletons.
 
   ```
   minCommonAncestors #[{Nonempty}] = #[#[Inhabited, Nonempty]]
   minCommonAncestors #[{Monoid}] = #[#[Monoid]]
   ```
 
-* **Multiple non-equipotent minimal common ancestors:** Rarely, requirements may
-  have multiple non-equipotent minimal common ancestors.
+* **Multiple non-equipotent minimal common ancestors:** Rarely, requirements may have multiple
+  non-equipotent minimal common ancestors.
 
   ```
   minCommonAncestors #[{Add}, {Mul}] = #[
@@ -281,21 +278,20 @@ all of these classes:
   ]
   ```
 -/
-public def minCommonAncestors (c : Condensation V) (reqs : Array (Std.HashSet V))
+public def minCommonAncestors (c : Condensation V) (reqs : Array (HashSet V))
     (ap : AbsencePolicy := .failClosed) : Array (Array V) :=
   -- map sets of required classes to sets of (the indices of) required SCCs
   let reqs := reqs.map c.indicesOf
   let reqs := match ap with
-    | .failClosed => if reqs.any (·.size == 0) then #[] else reqs
-    | .failOpenGuarded => reqs.filter (·.size > 0)
-  if reqs.size == 0 then #[]
+    | .failClosed => if reqs.any (·.isEmpty) then #[] else reqs
+    | .failOpenGuarded => reqs.filter (!·.isEmpty)
+  if reqs.isEmpty then #[]
   else
-    -- Returns `true` iff `i` satisfies `req`
-    let satisfies := fun (i : Nat) (req : Std.HashSet Nat) =>
-      let d := c.downSetsByIndex.getD i {} -- down-set of `i`
-      req.any d.contains -- does the down-set contain any of the witnesses of `req`?
+    let reqArr : Array (Array Nat) := reqs.map (·.toArray)
     -- common ancestors are vertices which satisfy all the requirements
-    let commonAncestors := c.graph.vertices.filter fun i => reqs.all (satisfies i ·)
+    let commonAncestors := c.vertices.filter fun i =>
+      let d := c.downSetsByIndex.getD i {}
+      reqArr.all fun req => req.any d.contains
     -- filter out non-minimal common ancestors
     let minimal := commonAncestors.filter fun ca =>
       let d := c.downSetsByIndex.getD ca {}
@@ -306,70 +302,6 @@ public def minCommonAncestors (c : Condensation V) (reqs : Array (Std.HashSet V)
     minimal.map fun ca => c.members.getD ca #[]
 
 /--
-Given a condensation `c` (e.g., a class DAG) and a function `ignore` indicating
-vertices of the condensation that we should pretend aren't there (e.g., classes
-not carrying any data), and given two vertices `x` and `y` of `c`, returns
-`true` iff the down-sets of `x` and `y` in `c` intersect in at least one
-non-ignored vertex of `c`.
-
-In our case, this is used to determine whether a class hypothesis `h` could be
-split into two class hypotheses `x` and `y`. If `x` and `y` share a
-data-carrying descendant in the class DAG, then the answer is no, because
-splitting `h` into `x` and `y` could allow `x` and `y` to each use a different
-instance of the data that was previously solely carried by `h`, which could
-change the meaning of the declaration being processed. If `x` and `y` only share
-non-data-carrying descendants, splitting `h` into `x` and `y` is safe, due to
-proof irrelevance. Similarly, if `x` and `y` don't share any descendants,
-splitting `h` into `x` and `y` is also safe.
-
-_See also:_ [best2023automaticallyGeneralizingTheorems].
-
----
-**Examples**
-
-The examples below assume that `c` is mathlib's class DAG, and that `ignore v`
-returns `true` iff `v` is not a data-carrying class.
-
-* `sharesDataDesc` would return `true` for `Semigroup` and `MulOneClass`, since
-  those two classes share the data-carrying descendant `Mul`. This means that a
-  theorem with hypothesis `[Monoid α]` but which uses only `[Semigroup α]` and
-  `[MulOneClass α]` can nonetheless not split the `Monoid` hypothesis up,
-  because the instances of `Mul` that `Semigroup` and `MulOneClass` each use
-  would not guaranteed to be the same anymore.
-* `sharesDataDesc` would return `false` for `IsPreorder` and `Std.Total`, since
-  those two classes only share the non-data-carrying descendant `Std.Refl`. This
-  means that a theorem with hypothesis `[IsLinearOrder α]` but which uses only
-  `[IsPreorder α]` and `[Std.Total α]` could safely split the `IsLinearOrder`
-  hypothesis up, because the instances of `Std.Refl` that `IsPreorder` and
-  `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
--/
-public def sharesDataDesc (c : Condensation V) (ignore : V → Bool) (x y : V) : Bool :=
-  match c.componentsMap[x]?, c.componentsMap[y]? with
-  | some ix, some iy =>
-    let dx := c.downSetsByIndex.getD ix {}
-    let dy := c.downSetsByIndex.getD iy {}
-    let (small, big) := if dx.size ≤ dy.size then (dx, dy) else (dy, dx)
-    small.any fun k => big.contains k && ! (c.members.getD k #[]).all ignore
-  | _, _ => false
-
-/--
-Partitions `used` into subsets whose down-sets don't intersect on any
-non-ignored vertices.
-
----
-**Example**
-
-Roughly speaking, in our use-case, if `partitionByDesc` was called on
-`{Semigroup, MulOneClass, IsPreorder, IsTotal}`, it would return `[{Semigroup,
-MulOneClass}, {IsPreorder}, {IsTotal}]`. Refer to the examples documented for
-`sharesDataDesc` for more information.
--/
-public def partitionByDesc (c : Condensation V)
-    (used : Std.HashSet V) (ignore : V → Bool) : Array (Std.HashSet V) :=
-  Coalescence.coalesce (fun a b => a.any fun x => b.any (c.sharesDataDesc ignore x))
-    (used.toArray.map fun v => {v})
-
-/--
 Given the condensation of a graph and two vertices `s` and `t` of the graph
 (pre-condensation), returns whether `s` reaches `t` in the graph
 (pre-condensation).
@@ -378,3 +310,59 @@ public def reaches (c : Condensation V) (s t : V) : Bool :=
   match c.componentsMap[s]?, c.componentsMap[t]? with
   | some s_idx, some t_idx => (c.downSetsByIndex.getD s_idx {}).contains t_idx
   | _, _ => false
+
+/--
+Given an array `xs` and methods
+
+* `fuse` to merge two elements of the array and
+* `connected` to query whether two elements of the array should be merged,
+
+returns an array in which no two elements should be merged anymore.
+
+We require the following preconditions:
+
+* `connected` must be a symmetric relation.
+* For any `a b c : α`, `connected a c` implies `connected (fuse a b) c`.
+
+---
+**Examples:**
+
+```
+coalesceWith (·.append ·) (fun x y : List Nat => x.any y.contains)
+  #[[1], [1, 2], [3], [2, 4], [5, 6]] = #[[1, 1, 2, 2, 4], [3], [5, 6]]
+coalesceWith (·.union ·) (fun x y : HashSet Nat => !(x.inter y).isEmpty)
+  #[{1}, {1, 2}, {3}, {2, 4}, {5, 6}] = #[{1, 2, 4}, {3}, {5, 6}]
+```
+-/
+public def coalesceWith {α : Type _} [Inhabited α] (fuse : α → α → α) (connected : α → α → Bool)
+    (xs : Array α) : Array α :=
+  let rec loop (xs : Array α) (fuel : Nat) : Array α :=
+    match fuel with
+    | 0 => xs
+    | fuel + 1 =>
+      let fused : Option (Array α) := Id.run do
+        for i in [0:xs.size] do
+          for j in [i+1:xs.size] do
+            if connected xs[i]! xs[j]! then
+              return some (
+                #[fuse xs[i]! xs[j]!] ++ ((xs.eraseIdxIfInBounds j).eraseIdxIfInBounds i)
+              )
+        return none
+      match fused with
+      | none => xs
+      | some xs' => loop xs' fuel
+  loop xs (xs.size * xs.size + 1)
+
+/--
+Partitions `used` into subsets whose down-sets are disconnected according to `conn`.
+
+---
+**Example**
+
+Roughly speaking, in our use-case, if `partitionByDesc` was called on `{Semigroup, MulOneClass,
+IsPreorder, IsTotal}`, it would return `[{Semigroup, MulOneClass}, {IsPreorder}, {IsTotal}]`. Refer
+to the examples documented for `sharesDataDesc` for more information.
+-/
+public def partitionByDesc (used : HashSet V) (conn : V → V → Bool) : Array (HashSet V) :=
+  coalesceWith (·.union ·) (fun a b => a.any fun x => b.any (conn x))
+    (used.toArray.map fun v => {v})

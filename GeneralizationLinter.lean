@@ -1,8 +1,14 @@
-import GeneralizationLinter.Basic
-import GeneralizationLinter.Core.Linter
-import GeneralizationLinter.Core.Options
-import GeneralizationLinter.Helpers.Coalescence
-import GeneralizationLinter.Helpers.Digraph
-import GeneralizationLinter.Helpers.ClassGraph
-import GeneralizationLinter.Helpers.Canonicalization
-import GeneralizationLinter.Helpers.Vertex
+module
+public import GeneralizationLinter.Helpers.Digraph
+public import GeneralizationLinter.Helpers.Vertex
+public import GeneralizationLinter.Helpers.Canonicalization
+public import GeneralizationLinter.Helpers.ClassGraph
+public import GeneralizationLinter.Core.Options
+public import GeneralizationLinter.Core.Collect
+public import GeneralizationLinter.Core.Suggest
+public import GeneralizationLinter.Core.ReSynth
+public import GeneralizationLinter.Core.Verify
+public import GeneralizationLinter.Core.Recompile
+public import GeneralizationLinter.Core.UniverseGen
+public import GeneralizationLinter.Helpers.GraphCache
+public import GeneralizationLinter.Frontend.Linter

@@ -1,3 +1,9 @@
 .lake
 .DS_Store
 _*.lean
+resources-for-agents
+.claude
+graph-export
+sources
+GeneralizationLinter/**/_*
+tests
