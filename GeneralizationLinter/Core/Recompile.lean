@@ -15,6 +15,10 @@ namespace GeneralizationLinter
 /-!
 # Recompile
 
+This module concerns itself with elaborating a weakened term (usually the proof term of a theorem)
+and type-checking the result against some expected type (usually the conclusion of a theorem). This
+is used to verify a weakening candidate before it is ever suggested. The goal is to never emit a
+single false positive, i.e., an erroneous suggestion.
 -/
 
 public inductive WeakeningGrade where
@@ -24,8 +28,22 @@ public inductive WeakeningGrade where
 deriving Inhabited, BEq
 
 public inductive WrapperClassification where
+  /--
+  "Declaration wrappers" that we can and should "replay", because they may affect our linter's
+  verdict. These are `open … in` and `set_option … in` commands.
+  -/
   | replayable
+  /--
+  "Declaration wrappers" that we can ignore, because they don't affect our linter's verdict. These
+  are `include … in` commands, and `omit … in` commands that don't contain any `Term.hole` or
+  `Term.syntheticHole` within them. TODO: More details on why.
+  -/
   | ignorable
+  /--
+  "Declaration wrappers" that we cannot replay, and which may affect our linter's verdict. When a
+  declaration is wrapped with one or more of these kinds of wrappers, we skip it. Any wrappers that
+  are not `.replayable` or `.ignorable` are treated as `.refused`.
+  -/
   | refused
 deriving Inhabited, BEq
 
@@ -51,27 +69,28 @@ public def classifyWrapper (w: Syntax) : WrapperClassification :=
 
 
 /--
-Peel any `open … in` and `set_option … in` "wrappers" off of the main declaration. For example, if
-`stx` was
+Peel any `open … in`, `set_option … in`, and "hole-less" `omit … in …` "wrappers" off of the main
+declaration. For example, if `stx` was
 
 ```
 open Nat in
 set_option pp.all true in
+omit [Monoid M] in
 @[instance] theorem something : … := …
 ```
 
 then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all›],
-‹@[instance] lemma something : … := …›)`.
+‹@[instance] lemma something : … := …›)`. (Note that the `omit [Monoid M] in` wrapper is not
+among those returned; this is because TODO)
 
-If the declaration includes any other "`in`-style" wrappers (`attribute … in …`, `omit … in …`,
+If the declaration includes any other wrappers (`omit … in …` with holes, `attribute … in …`,
 `include … in …`, etc.), return `none`. This is because `peelWrappers?`'s output is passed on to
 `rewrapTerm` to get rewrapped into a _term_ instead of a command or declaration (which would be much
 harder to deal with further down the line), and only `open` and `set_option` are the only wrappers
 of this kind that are available in `Parser.Command.Term`.
 
-There's <2000 declarations in Mathlib v4.32.0 that use the "`in`-style" wrappers that lead
-`peelWrappers?` to return `none` (which in turn prevents the linter from being able to emit any
-suggestions).
+There's <2000 declarations in Mathlib v4.32.0 that use wrappers that lead `peelWrappers?` to return
+`none` (which in turn prevents the linter from being able to emit any suggestions).
 
 ---
 **Example**
@@ -283,6 +302,7 @@ public def declValNodes (stx : Syntax) : Array Syntax :=
 --   | some declId => (declId.getArg 0).getId.eraseMacroScopes.isSuffixOf declName
 --   | none => false
 
+/-- TODO -/
 public def recompiledAgainst? (W : Expr) (bodyStx : Syntax) : TermElabM (Option Expr) :=
   suppressingDiagnostics do
   try
@@ -295,11 +315,13 @@ public def recompiledAgainst? (W : Expr) (bodyStx : Syntax) : TermElabM (Option 
       return some val
   catch _ => return none
 
+/-- TODO -/
 public def recompiledVal? (const : ConstantInfo) (bodyStx : Syntax)
     (ws : Array (Nat × Array Name)) : TermElabM (Option (Expr × Expr)) := do
   let some W ← weakenedStatementType const ws | return none
   return (← recompiledAgainst? W bodyStx).map (W, ·)
 
+/-- TODO -/
 public def recompileHolds (const : ConstantInfo) (bodyStx : Syntax)
     (ws : Array (Nat × Array Name)) : TermElabM Bool :=
   return (← recompiledVal? const bodyStx ws).isSome
@@ -309,6 +331,7 @@ public structure GradedWeakening where
   grade : WeakeningGrade
   deriving Inhabited
 
+/-- TODO -/
 public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (bodyStx : Syntax) : TermElabM (Array GradedWeakening) := do
   (← meetCandidates cfg graph const).filterMapM fun candidate => do

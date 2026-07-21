@@ -75,7 +75,10 @@ private def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermEl
     withTheReader Core.Context (fun c => { c with maxHeartbeats := heartbeats }) <|
       tryCatchRuntimeEx x (fun _ => pure ())
 
-/-- TODO -/
+/--
+If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just
+run `x` with the existing `maxHeartbeats`.
+-/
 private def withDeclBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
     TermElabM α := do
   if budget == 0 then return ← x
@@ -86,20 +89,35 @@ private def withDeclBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM
       (withCurrHeartbeats x))
     (fun _ => pure dflt)
 
-/-- TODO -/
+/-- Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied. -/
 private def wrapperEffectiveOptions? (wrappers : Array Syntax) :
-    Command.CommandElabM (Option Options) := do
+    CommandElabM (Option Options) := do
+  -- `elabSetOption` modifies infotrees of `CommandElabM`, so we snapshot `InfoState` here and roll
+  -- back to it after setting the options.
   let savedInfo ← getInfoState
-  let effectiveOpts ← foldSetOptionWrappers? wrappers (← getOptions) fun opts w =>
-    try
-      let o ← Command.withScope (fun s => { s with opts })
-        (Elab.elabSetOption (w.getArg 1) (w.getArg 3))
-      pure (some o.1)
-    catch _ => pure none
+  let effectiveOpts ← foldSetOptionWrappers? wrappers (← getOptions)
+    -- Callback establishing how to apply the `set_option` wrapper `w` to `opts : Options`.
+    fun opts w => try
+        -- We want to accumulate towards an `opts'` map that contains all prior `set_option`
+        -- wrappers in `wrappers` already, on top of whatever options `CommandElabM` had before.
+        let (opts', _) ← withScope
+          -- `scope` is the (currently active) scope of `CommandElabM`, and `{ scope with opts }` is
+          -- just that scope with `opts` applied to it, which is precisely the transient scope with
+          -- which we want to run `elabSetOption`.
+          (fun scope => { scope with opts })
+          (elabSetOption
+              (w.getArg 1)  -- option identifier
+              (w.getArg 3)) -- option value
+        pure (some opts')   -- return `opts` with `w` applied to it.
+      catch _ => pure none
+  -- Roll back `InfoState` so that modifications by `elabSetOption` don't mess with it.
   setInfoState savedInfo
   return effectiveOpts
 
-/-- TODO -/
+/--
+Run the typeclass linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
+whose value is described by syntax tree `bodyStx`.
+-/
 private def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (bodyStx : Syntax) (declName : Name) : TermElabM Unit := do
   for gw in ← withDeclBudget cfg.perDeclHeartbeats #[] (gradedWeakenings cfg graph const bodyStx) do
@@ -115,7 +133,10 @@ private def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const 
         m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {describeTarget c}."
     logLint linter.generalizeTypeclasses (← getRef) msg
 
-/-- TODO -/
+/--
+Run the universe linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
+whose value is described by syntax tree `bodyStx`.
+-/
 private def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
     (declCmd bodyStx : Syntax) (wrappers : Array Syntax) (declName : Name) : TermElabM Unit := do
   let some declSig := declCmd.find? (·.isOfKind ``Parser.Command.declSig) | return
@@ -138,6 +159,7 @@ private def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
       logLint linter.generalizeUniverses (← getRef)
         m!"the binders {names} of `{declName}` can be jointly universe-polymorphic at one shared level."
 
+
 /--
 
 ---
@@ -152,13 +174,90 @@ set_option C true in
 lemma something ‹binders› : ‹concl› := ‹value›
 ```
 
-1. Lean calls `elabCommandTopLevel` on `set_option A true in`
-2. , which then recursively e
+1.  Every top-level command of the file gets parsed into its own syntax tree `stx : Syntax`. In our
+    example, we pretend that the file contains nothing else other than the four lines shown above,
+    which would mean that there is only one top-level command.
 
+    ```markdown
+    `Command.in`
+    ├─ [0] `Command.set_option`
+    │      └─ … (4 children)
+    ├─ [1] `atom "in"`
+    └─ [2] `Command.in`
+           └─ … (3 children)
+    ```
+
+    Note that `stx[2]` corresponds to the syntax tree of all but the first line of code. Also note
+    that `stx` itself is just the `Syntax.node` corresponding to the root node of the tree.
+    `Syntax.node` is defined as one of the possible values of the inductive type `Syntax`, and each
+    `Syntax.node` comes with arguments `info : SourceInfo`, `kind : SyntaxNodeKind`, and `args :
+    Array Syntax` (the node's children).
+
+2.  Lean calls `elabCommandTopLevel stx`, which, for our purposes, we can understand as calling
+    `elabCommand stx` first, and then `runLintersAsync stx` (many details are omitted here):
+
+    1.  `elabCommand stx`: Since `stx.getKind != nullKind`, `elabCommand` calls `expandMacroImpl?`
+        to check if there is a macro expander defined for `stx`'s kind, and finds `expandInCmd`. It
+        then runs `expandInCmd stx` to get `stxNew`:
+
+        ```markdown
+        `null`
+        ├─ [0] `Command.section`
+        │      └─ … (3 children)
+        ├─ [1] `Command.set_option`
+        │      └─ … (4 children)
+        ├─ [2] `Command.InternalSyntax.end_local_scope`
+        │      └─ … (2 children)
+        ├─ [3] `Command.in`
+        │      └─ … (3 children)
+        └─ [4] `Command.end`
+              └─ … (2 children)
+        ```
+
+        `stxNew` would correspond to the following source code (written in diff notation to
+        highlight the changes):
+
+        ```diff
+        - set_option A true in
+        + section
+        + set_option A true
+        + end_local_scope 1
+        open B in
+        set_option C true in
+        lemma something ‹binders› : ‹concl› := ‹value›
+        + end
+        ```
+
+        Note that `stxNew[3] = stx[2]` remains unexpanded; expansion is performed one layer at a
+        time. After expanding `stx` to `stxNew`, `elabCommand` calls `elabCommand stxNew`.
+
+        1.  `elabCommand stxNew`: Since `stxNew.getKind == nullKind`, `elabCommand` calls
+            `stxNew.getArgs.forM elabCommand`. And so on. When `elabCommand` is called on a node for
+            which a specialized elaborator exists, it will call that specialized elaborator. For the
+            node kinds seen above, these specialized elaborators are `elabSection`, `elabSetOption`,
+            `elabEndLocalScope`, and `elabEnd` (`Command.in` has no elaborator, but rather just the
+            macro expander `expandInCmd`). The full tree of `stxNew` requires many more specialized
+            elaborators still.
+
+    2.  `runLintersAsync stx`: By the time this call runs, `stx` has been fully processed by the
+        elaborator and macro expander, which may have well modified the command state; in our
+        example, we find that ``Command.State.env.constants.map₂[`something]`` now exists, and
+        contains the `ConstantInfo` corresponding to the (fully elaborated) constant `something`
+        that we declared. Nonetheless, `stx` still refers to the original syntax tree that the
+        parser returned at the very beginning.
+
+So `linter` has access to the syntax tree of the user's source code pre-elaboration (and thus also
+pre-expansion), while the command state within which `linter` runs also provides it with access to
+the fully elaborated declaration.
 -/
 public def linter : Linter where
-  -- `withSetOptionIn` peels off leading `set_option … in` commands
+  -- `withSetOptionIn` peels off leading `set_option … in` commands. However, in our docstring
+  -- example, it would only peel off `set_option A true in`, and not `set_option C true in`, because
+  -- of the `open B in` between them. So `peelWrappers?` still needs to handle `set_option`s as
+  -- well.
   run := withSetOptionIn fun stx => do
+    -- `declCommand` is `stx` with all the leading `set_option … in`, `open … in`, and "hole-less"
+    -- `omit … in` removed; see `peelWrappers?`
     let some (wrappers, declCmd) := peelWrappers? stx | return
     let some effectiveOpts ← wrapperEffectiveOptions? wrappers | return
     let lintOpts ← Command.withScope (fun s => { s with opts := effectiveOpts }) getLinterOptions
