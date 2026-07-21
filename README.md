@@ -1,211 +1,101 @@
-# Generalization linter
+# Automated Theorem Generalization in Lean
 
-## Architecture
+This project's primary goal is to contribute a typeclass linter to
+[Mathlib](https://github.com/leanprover-community/mathlib4) which flage overly strong typeclass
+hypotheses and suggests weakenings.
 
-## Examples: Build time
+The source code is heavily commented, as this was both important for me to ensure I understood all
+the code, and likewise will be equally important for me to understand the code again in the future
+after I inevitably forget how it worked. Whatever version of this project may ultimately end up in a
+Mathlib pull request, its comments/docstrings will be condensed and adapted to comply with Mathlib's
+style guide.
 
-### `extends`
+## Documentation
 
-The most common case.
+### Installation and Usage
 
-```lean
--- Mathlib/Algebra/Group/Defs.lean:174-178
-/-- A semigroup is a type with an associative `(*)`. -/
-@[ext]
-class Semigroup (G : Type u) extends Mul G where
-  /-- Multiplication is associative -/
-  protected mul_assoc : ∀ a b c : G, a * b * c = a * (b * c)
+Currently, the only way to run the linter is to download/clone this repository and import the
+project locally. Hopefully, I'll be able to submit a PR for this linter to Mathlib within the coming
+weeks or months. Should that PR be rejected, I'll probably just submit the project to
+[Reservoir](https://reservoir.lean-lang.org/).
+
+The linter "initializes" itself on import, so any file which imports the linter (even if just
+indirectly) has access to it. To turn it on, you can set `linter.generalizeTypeclasses` to `true`
+(it's off by default):
+
+```lean4
+set_option linter.generalizeTypeclasses true
 ```
 
-**✔ Edge:** `[Semigroup α] → [Mul α]`
-
-**Questions:**
-- _Should we care about the specific type universe in which the carrier resides?_ I don't think so; at build time, we canonicalize the carriers into a generic bvar anyway (losing their type info). Besides, I suspect the carriers will usually be universe-polymorphic anyway (though I should verify this still).
+There's a few additional `generalizeTypeclasses.*` options available, and a universe linter under
+`linter.generalizeUniverses` (off by default).
 
 
-### Instance decl. with class application as output
+### Implementation
 
-```lean
--- Mathlib/Algebra/Group/Basic.lean:408-411
-@[to_additive]
-instance (priority := 100) DivisionMonoid.toDivInvOneMonoid : DivInvOneMonoid α :=
-  { DivisionMonoid.toDivInvMonoid with
-    inv_one := by simpa only [one_div, inv_inv] using (inv_div (1 : α) 1).symm }
-```
-
-**✔ Edge:** `[DivisionMonoid α] → [DivInvOneMonoid α]`
-
-**Questions:**
-- _Should we care about priority?_ I don't think we should, except in the specific case where we have a cluster of pairwise equivalent classes, in which case priority could help us pick which class to suggest from the cluster.
+I used `doc-gen4` to generate a documentation website automatically from the docstrings in the
+source code. This website is available at %TODO.
 
 
-### Instance decl. with Prop as output
+## Tool and computational resource disclosure
 
-```lean
--- Mathlib/Algebra/Group/Basic.lean:58-59
-@[to_additive]
-instance Semigroup.to_isAssociative : Std.Associative (α := α) (· * ·) := ⟨mul_assoc⟩
-```
-
-**? Edge:** `[Semigroup α] → [Associative (· * ·)]` (?).
-
-**Questions:**
-- _Should we insert an edge? If so, what edge should we insert?_ It would seem that, whenever a theorem makes use of `[Associative (· * ·)]`, it'd also make use of `[Mul α]`, since it needs the `*` whose associativity it's using. But `[Mul α] [Associative (· * ·)]` is the same as `[Semigroup α]`, so a weakening from `[Semigroup α]` to `[Associative (· * ·)]` would never make sense. How could we detect a useless weakening like that?
-  - #TODO
-- _If we had e.g. `[Group α] [Group β] : ... := (proof that uses β's assoc, but not more for β)` and suggest replacing `[Group α] [Group β]` with `[Group α] [Mul β] [Associative (· * ·)]`, how do we know that `*` will refer to the operation from `Mul β`, and not that of `Group α`?_
+**In short:** I used Anthropic's Claude a lot to write code and help me understand the code. It was
+helpful, but sometimes also a double-edged sword.
 
 
-### Instance decl. with ≥2 inst. implicit binders & class app. as output
+### Process
 
-A "hyperedge":
+I used generative artificial intelligence (AI) extensively in the creation of this project.
 
-```lean
-@[to_additive] instance (priority := low) (M) [MulOne M] [IsMulCommutative M] :
-    IsDedekindFiniteMonoid M where
-  mul_eq_one_symm := mul_comm' .. |>.trans
-```
+More specifically, I used Anthropic's Claude, primarily the Fable 5, Opus 4.8, Opus 4.7, and Opus
+4.6 models, mostly but not exclusively via Claude Code, to write the code constituting this project.
+Initially, this began with high-level prompts to reach a proof-of-concept port of [Alex J. Best's
+generalization linter](https://github.com/alexjbest/lean-generalisation). Then, more specific
+prompts were used to gradually improve the proof-of-concept to a feature-rich linter. This version
+was rather bloated, however, and architecturally dubious, so I started fresh and involved myself
+more in the specific architecture and interface of the code through more specific prompts.
 
-**? Edge:** `[IsMulCommutative M] → [IsDedekindFiniteMonoid M]` (?).
+After this, I had a codebase I was relatively pleased with. To ensure that I fully understood all
+the lower-level nuances of the code, however, I endeavored to manually transcribe the AI's branch
+bit by bit. After transcribing some number of functions/declarations, I'd pause and ensure that I
+fully understood the meaning of and intent behind each line. To do this, I usually resorted to
+asking AI, which could both relate the code to implementation details of components of the codebase
+I had not yet transcribed, as well as explain specific Lean mechanisms and concepts, especially
+metaprogramming concepts. These discussions, sometimes focused on just a few lines of code, often
+led to further improvements.
 
-**Questions:**
-- Should the edge be added?
-  - **Pros:**
-    - Suggestion candidates are verified before being emitted anyway, so adding this edge wouldn't compromise soundness, while potentially increasing recall.
-    - Empirically, based on medium-scale experimentation (~thousands of decls), adding the edge yields a net increase in recall. This is low-quality evidence though.
-  - **Cons:**
-    - For theorems having `[IsMulCommutative M]` but not `[MulOne M]` (nor anything stronger) in their telescope, this edge could compete against other edges (edges which may actually be sound), thus potentially blocking a good suggestion candidate and instead pushing a bad suggestion candidate that then gets rejected by the verifier, reducing recall.
-- Should the edge `[MulOne M] → [IsDedekindFiniteMonoid M]` also be added?
-  - I think Claude argued against this, and ran some medium-scale experiments (~thousands of decls) that suggested adding this edge would lead to a net recall loss (and rarely if ever produce a new suggestion), which makes sense to me given the contra point from above. The experiments are low-quality evidence though.
-- Should the edge `[MulOne M] → [IsDedekindFiniteMonoid M]` be added instead?
-  - According to Claude, mathlib convention is that the last binder tends to be the "subject" of the declaration, whereas earlier binders tend to just be "setup". Claude argued that this means adding the edge `[IsMulCommutative M] → [IsDedekindFiniteMonoid M]` makes more sense than adding the edge `[MulOne M] → [IsDedekindFiniteMonoid M]`. This sounds reasonable to me, but might warrant further investigation.
+I chose not to transcribe docstrings and comments, since, after going through the process mentioned
+above, I was confident that I could explain the code better myself. I did, however, often adopt
+examples that the AI had written itself, and also routinely had the AI check my docstrings for
+accuracy, or help me come up with further examples. Several examples in the docstrings include
+artifacts (e.g., nicely formatted syntax trees, elaborated terms, nicely formatted traces of
+functions, etc.) that were generated by AI-written probes and often copy-pasted (usually but not
+always into a code block), and sometimes adapted thereafter.
 
+I had done some background reading on Lean and Lean metaprogramming before I started work on this
+project, but I chose to begin work without yet feeling confident in my Lean skills under the
+assumption that it'd be easier to learn it on the go, and that doing so would inherently focus said
+learning on concepts that are specifically relevant to the project.
 
-### Instance decl. with inst. implicit binder & regular args, & class app. as output
+### Why I chose to use AI
 
+There are two main reasons I opted to use AI for this project.
 
-## Examples: Run time
+1. Time constraints. I had around 3 months to finish this project, and started without any
+   substantial experience with Lean, let alone Lean metaprogramming. I had done some background
+   reading, but I found the learning curve to be quite steep. Using AI enabled me to get to a
+   proof-of-concept much faster than I otherwise could have
+2. Usefulness. It mattered to me to create something that could actually be at least somewhat useful
+   to Mathlib maintainers, and using AI enabled me to iterate on designs, implement features, and
+   fix issues much faster than I otherwise could have, which also meant that, within the same amount
+   of time, I could produce something more sophisticated and powerful, i.e., something more useful
+   to the broader Mathlib community.
 
-### Decidability questions
-
-https://leanprover-community.github.io/mathlib4_docs/Mathlib/Algebra/Order/Module/Defs.html#neg_of_smul_neg_right
-
-```
-theorem neg_of_smul_neg_right
-    {α : Type u_1} {β : Type u_2} {a : α} {b : β}
-    [Zero α] [Zero β] [SMulWithZero α β] 
-    [Preorder α] [Preorder β] [SMulPosReflectLT α β] 
-    (h : a • b < 0) (hb : 0 ≤ b) :
-  a < 0
-```
-
-**Linter suggestion** (at some point pre-rewrite):
-
-```
-[LinearOrder β] ↝ [Preorder β]
-    ⚠ This weakening drops [LinearOrder β]; `decide`/`native_decide`/`omega` may stop working downstream. Re-check before applying.
-```
-
-**Questions:**
-- _How should matters of decidability be dealt with?_ #TODO: I haven't looked into this at all, and I don't really even know what decidability is referring to here.
-
-
-### Artificial example showing why verification is necessary, even if DAG is fully sound
-
-```lean
-class A (α : Type) where a : α → α
-class A' (α : Type) extends A α where a' : α → α
-class B (α : Type) where b : α → α
-class B' (α : Type) extends B α where b' : α → α
-
-class C (α : Type) where c : α → α
-
-instance A'B.toC [A' α] [B α] : C α := ⟨fun x => A'.a' x⟩
-instance AB'.toC [A α] [B' α] : C α := ⟨fun x => B'.b' x⟩
-
-theorem diamond {α : Type} [A' α] [B' α] (x : α) :
-    A.a x = A.a x ∧ B.b x = B.b x ∧ C.c x = C.c x :=
-  ⟨rfl, rfl, rfl⟩
-```
-
-DAG is just `A' -> A` and `B' -> B`, and the two instances `A'B.toC` and `AB'.toC` aren't inserted into the DAG (at least not in this hypothetical), since they're hyperedges. So the linter sees that `A'` could be weakened to `A`, and that `B'` could be weakened to `B`, and suggests both at the same time, not realizing that this compromises the theorem's reliance on `C`.
-
-**Note:** If I recall, the real-world example that demonstrated this issue was very complex, and so simplifying it to a minimal demonstration made sense.
-
-**Note:** Individually, the weakenings `A' -> A` and `B' -> B` are fine, so the linter should, ideally, just pick one and emit it. I got Claude to implement a "contextual" check to make the linter aware of these kinds of hyperedges (via `synthInst`) and hence able to act appropriately in this example. However, it's gated behind a default-off option, since it requires extra `synthInst` calls and hence slows down the linter. The slowdown isn't that great though, so I might want to look into making it a default-on option in the end — I'd have to run the numbers more thoroughly.
-
-
-
-## Suspicious edge cases
-
-These are declarations where the linter yielded odd suggestions.
-
-### `Sum.instIsWellOrderLex`
-
-https://leanprover-community.github.io/mathlib4_docs/Mathlib/Data/Sum/Order.html#Sum.instIsWellOrderLex
-
-```lean
-instance Sum.instIsWellOrderLex 
-    {α : Type u_1} {β : Type u_2} 
-    (r : α → α → Prop) (s : β → β → Prop) 
-    [IsWellOrder α r] [IsWellOrder β s] :
-  IsWellOrder (α ⊕ β) (Lex r s)
-```
-
-**Linter suggestion** (at some point pre-rewrite):
-
-```
-[IsWellOrder α β] ↝ [IsWellFounded α β] [Std.Trichotomous α]
-[IsWellOrder β β] ↝ [IsWellFounded β β] [Std.Trichotomous β]
-```
-
-**Why is this suspicious:**
-- Why is the linter emitting a suggestion to weaken `[IsWellOrder β β]`, when that doesn't even appear in the declaration's telescope?
-- Are we sure we want the linter to run on instance declarations?
-
-### `InitialSeg.eq_or_principal`
-
-https://leanprover-community.github.io/mathlib4_docs/Mathlib/Order/InitialSeg.html#InitialSeg.eq_or_principal
-
-```lean
-theorem InitialSeg.eq_or_principal 
-    {α : Type u_1} {β : Type u_2} 
-    {r : α → α → Prop} {s : β → β → Prop} 
-    [IsWellOrder β s] (f : InitialSeg r s) :
-  Function.Surjective ⇑f ∨ 
-    ∃ (b : β), ∀ (x : β), x ∈ Set.range ⇑f ↔ s x b
-```
-
-**Linter suggestion** (at some point pre-rewrite):
-
-```
-[IsWellOrder β β] ↝ [IsWellFounded β β] [Std.Trichotomous β]
-```
-
-**Why is this suspicious:**
-- Same as in `Sum.instIsWellOrderLex`: Why is the linter emitting a suggestion to weaken `[IsWellOrder β β]`, when that doesn't even appear in the declaration's telescope?
-
-
-## Well-handled edge cases
-
-### `Prod.swap_covBy_swap`
-
-https://leanprover-community.github.io/mathlib4_docs/Mathlib/Order/Cover.html#Prod.swap_covBy_swap
-
-```lean
-theorem Prod.swap_covBy_swap 
-    {α : Type u_1} {β : Type u_2} 
-    [PartialOrder α] [PartialOrder β] 
-    {x y : α × β} :
-  x.swap ⋖ y.swap ↔ x ⋖ y
-```
-
-**Linter suggestion** (at some point pre-rewrite):
-
-```
-[PartialOrder α] ↝ [Preorder α]
-[PartialOrder β] ↝ [Preorder β]
-```
-
-**Why this is well-handled:**
-- Being able to suggest two weakenings which are only differentiated by the carrier type is nice.
+Not everything about the involvement of AI in this project was positive though. Especially with
+high-level concepts, AI was often mistaken in ways that were very hard to detect, especially as
+someone who was in the process of learning those same concepts. Cumulatively, these mistakes
+probably cost several days' worth of time. Furthermore, using AI lead to less sense of ownership
+over the codebase, which felt quite uncomfortable and is one of the reasons behind why I wanted to
+transcribe the code manually — perhaps a frivolous, purely symbolic gesture, but one that genuinely
+mattered to me.
 
