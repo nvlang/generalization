@@ -205,6 +205,20 @@ def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α
   withReader (fun ctx => { ctx with
     localInstances := ctx.localInstances.filter (·.fvar.fvarId! != drop) }) act
 
+/-- TODO -/
+public def replacementsRedundant (type : Expr) (binderIdx : Nat) (repls : Array Name) :
+    MetaM Bool := do
+  try
+    forallTelescope type fun args _ => do
+      let some (_, fv) ← getNthTargetedBinder args binderIdx | return false
+      let oldType ← inferType fv
+      let mut goals : Array Expr := #[]
+      for r in repls do
+        let some g ← replaceBinderType oldType r | return none |>.getD false
+        goals := goals.push g
+      withoutLocalInstance fv.fvarId! <| goals.allM fun g => return (← synthInstance? g).isSome
+  catch _ => return false
+
 
 /--
 Replace the targeted binder `tb` with `replacements`. If `replacements` is empty, this means

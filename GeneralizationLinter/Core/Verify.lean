@@ -67,6 +67,16 @@ def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate
       | some tgt => tgt.toVertex != concl.toVertex -- if weakening target is conclusion, drop candidate
       | none => true -- TODO: Is it safe to assume that splits can't lead to assuming the conclusion?
 
+/-- TODO -/
+def demoteVacuousWeakenings (declInfo : ConstantInfo) (candidates : Array Candidate) :
+    MetaM (Array Candidate) :=
+  candidates.filterMapM fun c => do
+    if c.replacementNames.isEmpty then return some c
+    unless (← replacementsRedundant declInfo.type c.binder.idx c.replacementNames) do return some c
+    let d := { c with shape := .drop }
+    return if (← weakeningHolds declInfo d) then some d else none
+
+
 /--
 Returns unverified weakening suggestion candidates for a given declaration.
 -/
@@ -77,9 +87,14 @@ public def meetCandidates (config : LinterConfig) (G : ClassGraph) (declInfo : C
   if binders.isEmpty then return #[]
   let chains ← getMIChains binders declInfo.type val
   let reqs ← getReqs binders chains
-  let candidates := candidates G binders reqs config (includeSubsumers := config.subsumption)
-  if !config.conclusionGuard then return candidates
-  return refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
+  let mut candidates := candidates G binders reqs config (includeSubsumers := config.subsumption)
+  if config.conclusionGuard then
+    candidates := refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
+  if config.vacuityGuard && config.verify then
+    candidates ← demoteVacuousWeakenings declInfo candidates
+  return candidates
+
+
 
 /--
 Returns verified weakening suggestions for a given declaration.

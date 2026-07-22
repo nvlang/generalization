@@ -80,6 +80,7 @@ public structure LinterConfig where
   verify : Bool := true
   subsumption : Bool := true
   conclusionGuard : Bool := true
+  vacuityGuard : Bool := true
 
 deriving Inhabited
 
@@ -115,22 +116,36 @@ public register_option generalizeTypeclasses.perDeclHeartbeats : Nat := {
   descr := "per-declaration heartbeat budget for the typeclass linter's analysis."
 }
 
+-- This option will (almost definitely) not be part of the final API. It is used for thesis
+-- experiments.
 public register_option generalizeTypeclasses.verify : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether suggested weakenings should be
     verified."
 }
 
+-- This option will (almost definitely) not be part of the final API. It is used for thesis
+-- experiments.
 public register_option generalizeTypeclasses.subsumption : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether the subsumption should be used
     when querying the class graph."
 }
 
+-- This option will (almost definitely) not be part of the final API. It is used for thesis
+-- experiments.
 public register_option generalizeTypeclasses.conclusionGuard : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether weakenings that result in the
     conclusion being assumed should be blocked."
+}
+
+-- This option will (almost definitely) not be part of the final API. It is used for thesis
+-- experiments.
+public register_option generalizeTypeclasses.vacuityGuard : Bool := {
+  defValue := true,
+  descr := "[Warning: disabling this option is experimental]. Whether weakenings that are detected
+    to be vacuous should be blocked. Not all vacuity is detected."
 }
 
 public register_option linter.generalizeUniverses : Bool := {
