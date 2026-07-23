@@ -31,6 +31,13 @@ public structure Candidate where
   shape : WeakeningShape
   deriving Inhabited
 
+/-- The `Keys`s of the classes of the proposed replacements. -/
+public def Candidate.replacementKeys (c : Candidate) : Array Key :=
+  match c.shape with
+  | .drop => #[]
+  | .weaken t => #[t]
+  | .split ts => ts
+
 /-- The `Name`s of the classes of the proposed replacements. -/
 public def Candidate.replacementNames (c : Candidate) : Array Name :=
   match c.shape with
@@ -47,16 +54,7 @@ public def Candidate.singleWeakening? (c : Candidate) : Option Key :=
   | .weaken t => some t
   | _ => none
 
-/--
-The pattern arity of a vertex, i.e., the number of key slots it has.
-
-See also:
-* `Vertex.pattern`
-* `keySlots`
--/
-def patArity (v : Vertex) : Nat := v.pattern.size
-
-/-- Everything `suggest` needs to produce its answers, compiled in one str ucture. -/
+/-- Everything `suggest` needs to produce its answers, compiled into one structure. -/
 private structure MeetContext where
   /-- Class graph. -/
   graph : ClassGraph
@@ -181,12 +179,28 @@ def MeetContext.sharesDataDesc (ctx : MeetContext) (u v : Vertex) : Bool :=
       let descsᵥ := ctx.dataDescendants v'
       descsᵤ.any fun dᵤ => descsᵥ.any (Vertex.unifiable dᵤ ·)
 
-/-- We forbid pattern-arity-increasing weakening suggestions, so  -/
-def MeetContext.filterReqVerts (ctx : MeetContext) (binderPatternArity : Nat)
+/-- Every bvar of a requirement's `pattern` must be substitutable by the binder's carriers. -/
+def MeetContext.filterReqVerts (ctx : MeetContext) (b : TargetedBinder)
     (reqVerts : HashSet Vertex) : Array Vertex :=
-  let byArity := reqVerts.toArray.filter (fun v => patArity v == binderPatternArity)
+  let byArity := reqVerts.toArray.filter (fun v => v.pattern.all (·.looseBVarRange ≤ b.subst.size))
   byArity.filter fun u =>
     ¬ byArity.any fun v => v != u && ctx.reachesV v u && ¬ ctx.reachesV u v
+
+/--
+These are class names that Mathlib has access to but which, if found within an SCC, have preferred
+alternatives.
+-/
+def sccDemotedHeads : List Name := [`NSMul, `ZSMul, `NPow, `ZPow, `OfNat, `Trans]
+
+/--
+TODO
+-/
+def sccRepresentative (scc : Array Vertex) : Option Vertex :=
+  let pick (vertices : Array Vertex) : Option Vertex := vertices.foldl (init := none) fun best v =>
+    match best with
+    | none => some v
+    | some w => if (v.name.cmp w.name).isLT then some v else some w
+  pick (scc.filter fun v => !sccDemotedHeads.contains v.name) <|> pick scc
 
 /--
 Returns the meet of `reqs` in `ctx.graph.condensation`, if a unique meet exists. Otherwise, returns
@@ -201,7 +215,7 @@ def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vert
   let mca := (ctx.graph.condensation.minCommonAncestors reqs ctx.absencePolicy).filter fun scc =>
     scc[0]?.any (ctx.reachesV b.toVertex ·)
   match mca with
-  | #[scc] => scc[0]?
+  | #[scc] => sccRepresentative scc
   | _ => none -- `mca` is empty or has size ≥2
   -- TODO (low priority): If `mca` has size ≥2, it means there's multiple incomparable minimal
   -- common ancestors, each of which single-handedly satisfies all requirements (see
@@ -277,7 +291,7 @@ public def candidates (graph : ClassGraph) (binders : Array TargetedBinder)
   for b in binders do
     let bReqVerts : HashSet Vertex := reqs.foldl (init := {}) fun bReqVerts' req =>
       if req.binder.fvar == b.fvar then bReqVerts'.insert req.toVertex else bReqVerts'
-    let some meets := ctx.replacement? b (ctx.filterReqVerts b.toVertex.pattern.size bReqVerts) | continue
+    let some meets := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
     let shape := match meets.map (reifyVert b) with
       | #[] => WeakeningShape.drop
       | #[reifiedMeet] => WeakeningShape.weaken reifiedMeet

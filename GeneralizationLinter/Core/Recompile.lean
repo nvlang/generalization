@@ -317,13 +317,13 @@ public def recompiledAgainst? (W : Expr) (bodyStx : Syntax) : TermElabM (Option 
 
 /-- TODO -/
 public def recompiledVal? (const : ConstantInfo) (bodyStx : Syntax)
-    (ws : Array (Nat × Array Name)) : TermElabM (Option (Expr × Expr)) := do
+    (ws : Array (Nat × Array Key)) : TermElabM (Option (Expr × Expr)) := do
   let some W ← weakenedStatementType const ws | return none
   return (← recompiledAgainst? W bodyStx).map (W, ·)
 
 /-- TODO -/
 public def recompileHolds (const : ConstantInfo) (bodyStx : Syntax)
-    (ws : Array (Nat × Array Name)) : TermElabM Bool :=
+    (ws : Array (Nat × Array Key)) : TermElabM Bool :=
   return (← recompiledVal? const bodyStx ws).isSome
 
 public structure GradedWeakening where
@@ -337,7 +337,7 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
   (← meetCandidates cfg graph const).filterMapM fun candidate => do
     if !cfg.verify then
       return some { candidate, grade := .unverified }
-    if ← recompileHolds const bodyStx #[(candidate.binder.idx, candidate.replacementNames)] then
+    if ← recompileHolds const bodyStx #[(candidate.binder.idx, candidate.replacementKeys)] then
       return some { candidate, grade := .proofIntact}
     else if ← weakeningHolds const candidate then
       return some { candidate, grade := .needsModification }

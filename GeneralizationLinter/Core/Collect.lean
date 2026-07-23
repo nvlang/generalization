@@ -494,18 +494,43 @@ private abbrev CollectM := StateRefT (Array MIChain) MetaM
 /--
 Returns `some head` if `head` should be propagated through a descent step, or `none` if it
 shouldn't. If it shouldn't, that means `collect` will drop the chain and start a new one.
+
+---
+**Implementation notes**
+
+`propagatedHead?` returns `none` iff
+1.  the transformation `linkT` contains "open" arguments (arguments that contain ≥1 fvars) that are
+    not "statable" using the source's arguments, or
+2.  the transformation's conclusion has more open arguments than the source.
+
+---
+**Examples**
+
+* For the transformation from `CommMonoid M` to `Monoid M`, `propagatedHead?` returns `some head`.
+* For the transformation from `Nontrivial (Sub' R M)` to `IsSimpleModule R M`, `propagatedHead?`
+  returns #TODO.
+* For the transformation from `IsAtomic αᵒᵈ` to `IsCoatomic α`, `propagatedHead?` returns #TODO.
+* For the transformation from `Mul α` to `HMul α α α`, `propagatedHead?` returns `none`, due to
+  condition 2.
 -/
 def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) :
     MetaM (Option Key) := do
   let srcT ← whnf (← inferType src)
-  -- Transformation carriers must be a subset of the source's carriers, otherwise the transformation
-  -- is not a projection of the source and we drop the chain.
-  unless (← carrierArgs linkT).all (fun c => srcT.getAppArgs.any (· == c)) do return none
-  -- If head has more key arguments than the source, we drop the chain. That's mostly because we
-  -- don't want to be suggesting weakenings like `[Mul α] ↝ [HMul α α α]` or `[One α] ↝ [OfNat α
-  -- 1]`.
+  let srcArgs := srcT.getAppArgs
+  -- The transformation's open frame args that are not syntactically equal to one of `src`'s args.
+  let rough := (← frameArgs linkT).filter (fun c => !srcArgs.contains c)
+  -- If all of the transformation's open frame args are syntactically equal to one of `src`'s args,
+  -- we know for sure that condition 1 is satisfied. If not, we need to check more carefully.
+  unless rough.isEmpty do
+    let srcSubjects ← frameArgs srcT
+    let closedOk (e : Expr) : MetaM Bool := pure (!e.hasFVar && !srcSubjects.any (·.occurs e))
+    unless ← rough.allM (statableFrom srcArgs closedOk) do
+      return none
+  -- If `head` has more open key args than the source, we drop the chain. That's mostly because we
+  -- don't want to be suggesting weakenings like `[Mul α] ↝ [HMul α α α]`.
   let srcKey ← toKey srcT
-  return if head.pattern.size > srcKey.pattern.size then none else some head
+  let openArity (k : Key) : Nat := k.pattern.countP (·.hasLooseBVars)
+  return if openArity head > openArity srcKey then none else some head
 
 mutual
 

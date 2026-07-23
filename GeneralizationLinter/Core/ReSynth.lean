@@ -16,17 +16,26 @@ namespace GeneralizationLinter
 -/
 
 /-- Wrapper around `reifyClass` that adds support for family class binders. -/
-def replaceBinderType (oldType : Expr) (replacement : Name) : MetaM (Option Expr) := do
+def replaceBinderType (oldType : Expr) (replacement : Key) : MetaM (Option Expr) := do
   -- If `oldType` reduces to a family binder `∀ prefixes, body` (where `body` is a class
   -- application), then deconstruct (i.e., telescope) `oldType`, reify the replacement class in
   -- `body`, and reconstruct (`mkForallFVars`) the family binder with the new body `body'`.
+  let replVertex := replacement.toVertex
+  let replName := replVertex.name
   if (← whnfR oldType).isForall then
     forallTelescopeReducing oldType fun prefixes body => do
-      let some body' ← reifyClass replacement (← frameArgs body) | return none
+      let some body' ← reifyClass replName (← frameArgs body) | return none
       some <$> mkForallFVars prefixes body'
-  -- If `oldType` doesn't reduce to a family binder, then it's just a class application, and so
-  -- `reifyClass` can handle it directly.
-  else reifyClass replacement (← frameArgs oldType)
+  -- If `oldType` doesn't reduce to a family binder, then it's a class application.
+  else do
+    let oldKey ← toKey oldType
+    let replPattern := replVertex.pattern
+    if replPattern.any (·.looseBVarRange > oldKey.subst.size) then return none
+    let mut entries : Array Expr := #[]
+    for p in replPattern do
+      let some e ← elabEntry (p.instantiate oldKey.subst) | return none
+      entries := entries.push e
+    reifyClass replName entries (useKeySlots := true)
 
 /-- Does `e` have any fvar that is contained in `stale`? -/
 def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
@@ -206,7 +215,7 @@ def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α
     localInstances := ctx.localInstances.filter (·.fvar.fvarId! != drop) }) act
 
 /-- TODO -/
-public def replacementsRedundant (type : Expr) (binderIdx : Nat) (repls : Array Name) :
+public def replacementsRedundant (type : Expr) (binderIdx : Nat) (repls : Array Key) :
     MetaM Bool := do
   try
     forallTelescope type fun args _ => do
@@ -233,7 +242,7 @@ Parameters:
     == 1`, then a map from `tb` to `replacements[0]`.
   * The array of new replacement binder `Expr`s that were built.
 -/
-def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Name)
+def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Key)
     (k : HashMap FVarId Expr → Array Expr → MetaM (Option α)) : MetaM (Option α) := do
   let oldDecl ← tb.getDecl
   let userName := oldDecl.userName
@@ -241,7 +250,7 @@ def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Name)
     if h : i < replacements.size then
       let some newBinderType ← replaceBinderType (← tb.getType) replacements[i] | return none
       withLocalDecl userName oldDecl.binderInfo newBinderType fun newBinder => do
-        withNewLocalInstance ((← isClass? newBinderType).getD replacements[i]) newBinder
+        withNewLocalInstance ((← isClass? newBinderType).getD replacements[i].toVertex.name) newBinder
           (go (i + 1) (if replacements.size == 1 then remap.insert tb newBinder else remap)
             (newBinders.push newBinder))
     else k remap newBinders
@@ -284,7 +293,7 @@ def staleSets (oldFV : FVarId) (post : Array Expr) : HashSet FVarId × HashSet F
 /--
 TODO
 -/
-public def verifyWeakening (ciType val : Expr) (k : Nat) (repls : Array Name) : MetaM Bool := do
+public def verifyWeakening (ciType val : Expr) (k : Nat) (repls : Array Key) : MetaM Bool := do
   forallTelescope ciType fun args concl => do
     let body ← Core.betaReduce (mkAppN val args)
     let some (ti, oldBinder) ← getNthTargetedBinder args k | return false
@@ -314,11 +323,101 @@ public def verifyWeakening (ciType val : Expr) (k : Nat) (repls : Array Name) : 
     return (← withReplacementBinders oldFV repls fun remap newBinders =>
       some <$> finish remap newBinders).getD false
 
+-- /--
+-- Given a name `name` and its associated constant info `const`, returns the head of the class-typed
+-- conclusion of `const` if `const` could be a vacuity witness, and `none` otherwise.
+
+-- ---
+-- **Implementation notes**
+
+-- If `name` refers to a constant `const` for which we have that
+
+-- 1.  `const` is a definition (not a theorem, axiom, etc.),
+-- 2.  `const` is not internal (i.e., `name` does not start with `_`),
+-- 3.  `const`'s binders are all instance-implicit or `Sort`-typed,
+-- 4.  `const` has at least one class premise, and
+-- 5.  `const` concludes in a class application,
+
+-- then we view `const` as a potential "vacuity witness", i.e., a definition that may show that a
+-- weakening candidate is vacuous. An example of such a `const`:
+
+-- ```
+-- abbrev Module.addCommMonoidToAddCommGroup (R : Type*) {M : Type*}
+--     [Ring R] [AddCommMonoid M] [Module R M] : AddCommGroup M where --
+-- ```
+
+-- The 5 conditions enumerated above are only a heuristic. They may miss definitions that could be
+-- vacuity witnesses, and certainly may include ones that couldn't be. As such, we cannot guarantee
+-- that no vacuous suggestions will ever be emitted, but are merely trying to minimize their frequency
+-- to the point that at most a handful of vacuous weakenings are suggested across all of Mathlib, so
+-- that the linter can be turned off locally for these.
+-- -/
+-- def vacuityWitnessHead? (env : Environment) (name : Name) (const : ConstantInfo) : Option Name :=
+--   if !(const matches .defnInfo _) || name.isInternal then none else go const.type false
+-- where
+--   go : Expr → Bool → Option Name
+--     -- Work through binders one by one.
+--     | .forallE _ binderType body binderInfo, hasPremise =>
+--       -- We assume all instance-implicit arguments are class-typed.
+--       if binderInfo == .instImplicit then go body true
+--       else if binderType.isSort then go body hasPremise
+--       -- ≥1 of the binders is neither instance-implicit nor `Sort`-typed ⟹ `const` is not a vacuity
+--       -- witness according to our heuristic (condition 3).
+--       else none
+--     -- Base case: If we've made it to here, we just need to check that `const`'s conclusion is
+--     -- indeed class-typed, and then we can return its head.
+--     | e, hasPremise => do
+--       guard hasPremise
+--       let .const c _ := e.getAppFn | none
+--       guard (isClass env c)
+--       some c
+
+-- /--
+-- Scanning the environment for vacuity witnesses isn't super expensive, but it's not cheap either, so
+-- we cache the scan of imported constants specifically for each process; if the imported constants
+-- change, this generally requires a file rebuild, which would lead to a new process and hence kindly
+-- invalidate this cache for us.
+-- -/
+-- private initialize witnessScanRef : IO.Ref (Option (NameMap (Array Name))) ← IO.mkRef none
+
+-- /--
+-- Return all the potential vacuity witnesses (according to `vacuityWitnessHead?`) that are defined in
+-- the environment for the class `className`, but which are not registered instances (since those are
+-- taken into account by #TODO already).
+-- -/
+-- def vacuityWitnessesFor (className : Name) : MetaM (Array Name) := do
+--   let env ← getEnv
+--   let instances := (instanceExtension.getState env).instanceNames
+--   -- `nameMap` is the map from class names to the arrays of potential vacuity witnesses (according
+--   -- to `vacuityWitnessHead?`), which we're accumulating toward. `n` is a name of a constant that
+--   -- we're checking out to see whether we should add it to `nameMap`, and `const` is `n`'s constant
+--   -- info.
+--   let add (nameMap : NameMap (Array Name)) (n : Name) (const : ConstantInfo) : NameMap (Array Name) :=
+--     match vacuityWitnessHead? env n const with
+--     | some vacWitnessHead =>
+--       if instances.contains n then
+--         nameMap -- Registered instance already
+--       else
+--         nameMap.insert vacWitnessHead ((nameMap.getD vacWitnessHead #[]).push n)
+--     | none => nameMap
+--   -- This is the "vacuity witness name map" for imported constants, taken from the `witnessScanRef`
+--   -- cache or, if called for the first time, built from scratch.
+--   let imported ← (← witnessScanRef.get).getDM do
+--     let nameMap := env.constants.map₁.fold add {}
+--     witnessScanRef.set (some nameMap)
+--     pure nameMap
+--   -- This is the "vacuity witness name map" for local constants, built from scratch on every call.
+--   -- This build is very fast, since the number of local constants is generally rather small, and
+--   -- almost always far smaller than the number of important constants.
+--   let locals := env.constants.map₂.foldl add {}
+--   -- Return potential vacuity witnesses from across both imported and local constants.
+--   return (imported.getD className #[]) ++ (locals.getD className #[])
+
 
 /--
 TODO
 -/
-public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Array Name)) : MetaM (Option Expr) := do
+public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Array Key)) : MetaM (Option Expr) := do
   let sorted := ws.qsort (fun a b => a.1 > b.1)
   let mut type := const.type
   for (k, repls) in sorted do
@@ -326,7 +425,7 @@ public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Arra
     type := t
   return some type
 where
-  rebuiltStatementType (type : Expr) (n : Nat) (repls : Array Name) : MetaM (Option Expr) := do
+  rebuiltStatementType (type : Expr) (n : Nat) (repls : Array Key) : MetaM (Option Expr) := do
     forallTelescope type fun args concl => do
       let some (ti, _) ← getNthTargetedBinder args n | return none
       let oldFVar := args[ti]!.fvarId!            -- `FVarId` of targeted binder

@@ -53,23 +53,13 @@ public structure ClassEdge where
 /-! ## Extraction -/
 
 /--
-Returns an array of the `Sort`-typed arguments of a class application, i.e., its
-_carriers_, as opposed to its data arguments.
-
----
-**Examples**
-
-```
--- class IsPreorder (α : Sort*) (r : α → α → Prop) : Prop
-carrierArgs (@IsPreorder α r) = #[α]
--- class CharP (R : Type*) [AddMonoidWithOne R] (p : outParam ℕ) : Prop
-carrierArgs (@CharP R _ p) = #[R]
--- class Module (R : Type u) (M : Type v) [Semiring R] [AddCommMonoid M] : Type (max u v)
-carrierArgs (@Module R M _ _) = #[R, M]
-```
+Returns `true` iff `a`'s type is or reduces to `Sort`.
 -/
-public def carrierArgs (classAppE : Expr) : MetaM (Array Expr) :=
-  classAppE.getAppArgs.filterM fun a => return (← inferType a).isSort
+public def isSortTyped (a : Expr) : MetaM Bool :=
+  -- `whnfR` sees through reducible binder gadgets like `semiOutParam` or `outParam`; e.g., `RCLike`
+  -- binds `(K : semiOutParam (Type*))`, so plain `(← inferType K).isSort` would return `false`,
+  -- while `(← whnfR (← inferType K)).isSort` returns `true`.
+  return (← whnfR (← inferType a)).isSort
 
 /--
 The non-instance-implicit arguments of a class application. These are the arguments that are used by
@@ -98,84 +88,163 @@ public def frameArgs (classAppE : Expr) : MetaM (Array Expr) := do
     if (paramInfos[i]?.map (·.binderInfo.isInstImplicit)).getD false then none else some arg
 
 /--
+Returns `true` iff `e` is "statable" from `sArgs`.
+
+We define statability inductively as follows: `e` is statable from `sArgs` if
+
+1.  `whnfR e` is syntactically equal to `whnfR sArgs[i]` for some `i`,
+2.  `whnfR e` is an fvar occurring in `whnfR sArgs[i]` for some `i`,
+3.  `whnfR e` is "closed" according to `isClosed` (intuitively, this means it contains no fvars), or
+4.  `whnfR e` is an application of a "non-synonym" type former to arguments that are statable from
+    `sArgs`.
+
+By synonym type former we mean any type former which unfolds to one of its own arguments. By
+"non-synonym" type formers we mean any other type former. For example, `OrderDual` is a synonym type
+former, while `Monoid` is a "non-synonym" type former. See also `isSynonymFormer`.
+
+---
+**Implementation notes**
+
+One could argue that condition 2 should be weakened to `whnfR e` being an fvar that occurs in
+`sArgs[i]` instead of `whnfR sArgs[i]`. For example, if `sArgs[i]` is `FirstOf α β`, where `FirstOf
+α β := α`, and `whnfR e` is `β`, the weakened version would claim that `β` is statable from `FirstOf
+α β`, while the original condition 2 claims that it is not. However, condition 2, as stated, is
+better-suited for our purposes. This is because `canonArg` also uses `whnfR`, meaning that an
+application like `Monoid (FirstOf α β)` would be canonicalized into `Monoid α`. Hence, an instance
+like `instance Monoid (FirstOf α β) : Magma β` (let's pretend that it makes sense) would be
+extracted into an (unsound) edge from `Monoid α` to `Magma β` under the weakened condition 2, and
+rejected under the original condition 2.
+
+---
+**Examples**
+
+According to our definition of "statable", we have the following (where `α` and `β` are fvars):
+
+**Definition case 1:**
+* `α` is statable from `#[α]`.
+* `Monoid α` is statable from `#[Monoid α]`.
+* `OrderDual α` is statable from `#[OrderDual α]`.
+
+**Definition case 2:**
+* `α` is statable from `#[Monoid α]`.
+* `α` is statable from `#[OrderDual α]`.
+
+**Definition case 3:**
+* `ℕ` is statable from `#[]`.
+* `Monoid ℕ` is statable from `#[]`.
+
+**Definition case 4:**
+* `Monoid α` is statable from `#[α]`.
+
+**Definition cases 2 and 4:**
+* `Monoid α` is statable from `#[Group α]`.
+
+**Non-examples:**
+* `α` is not statable from `#[]` or `#[β]`.
+* `Monoid α` is not statable from `#[]` or `#[β]`.
+* `α` is not statable from `#[Monoid α]`.
+* `OrderDual α` is not statable from `#[α]`.
+
+**Note:** The reason we claim that `OrderDual α` is not statable from `#[α]`, while at the same time
+claiming that `α` is statable from `#[OrderDual α]`, is that we don't want to introduce synonyms,
+but are okay with removing them.
+-/
+public partial def statableFrom (sArgs : Array Expr) (isClosed : Expr → MetaM Bool)
+    (e : Expr) : MetaM Bool := do
+  go (← sArgs.mapM whnfR) e
+where go (sArgs : Array Expr) (e : Expr) : MetaM Bool := do
+  let e ← whnfR e
+  if sArgs.contains e then return true
+  if e.isFVar then return sArgs.any (·.containsFVar e.fvarId!)
+  if ← isClosed e then return true
+  let fn := e.getAppFn
+  let some head := fn.constName? | return false
+  if ← isSynonymFormer head then return false
+  unless isTypeConstructor (← getEnv) fn do return false
+  (← frameArgs e).allM (go sArgs)
+
+/--
 Helper for `extractEdge?` which, given some information about the instance declaration that
 `extractEdge?` is processing, indicates whether the edge is a weakening edge, which is the case iff
 all of the following conditions are satisfied:
 
+1.  Every frame argument of the target is statable from the source's arguments (see also
+    `statableFrom`).
 
-1.  Target has ≥1 carriers.
+    **Why?** Our graph's edges are ordered pairs of vertices, each vertex representing a specific
+    kind of class application. For the graph to be sound, wee need each edge to guarantee that,
+    given the source vertex, we can reach the target vertex. If the target is not statable from the
+    source's arguments, then this cannot be the case.
 
-    * Why? TODO
+2.  Every class-typed argument of the declaration other than the source is contained in the source's
+    type as a direct argument.
 
-2.  Target's frame args are subset of source's frame args (up to definitional equality).
+    **Why?** The rationale is essentially the same as for condition 1, this is just the analog for
+    class-typed args. Together, frame arguments and class-typed arguments comprise all arguments of
+    an instance (unless there's a non-class-typed instance-implicit parameter, which is almost never
+    the case; Mathlib has only one such declaration, `CategoryTheory.Bundled.of`, and even there the
+    intended usage is that the instance-implicit parameter should be a typeclass). They may also
+    overlap; for example, there's plenty of class-typed implicit arguments in Mathlib (see e.g.
+    `IsTopologicalGroup.toContinuousInv` in the examples section below).
 
-    * Why? TODO
-
-3.  Every class-typed argument of the declaration other than the source must be contained
-    in the source's type.
-
-    * Why? TODO
+For a brief discussion on this topic, see the thread [_general > When are instance mappings
+projections_](https://leanprover.zulipchat.com/#narrow/channel/113488-general/topic/When.20are.20instance.20mappings.20projections)
+on the Lean Zulip.
 
 ---
 **Examples**
 
+(Note: In the examples below, "source" refers to the last argument of the instance, which is looser
+than the sense in which the term is used for `sourceArg?`.)
+
+| Instance | Source's args | Target's frame args | C1 |
+|:--- |:--- |:--- |:--- |
+| `IsTopologicalGroup.toContinuousInv` | `G`, `inst₁`, `inst₂`, `self` | `G` | ✓ |
+| `Semiring.toNatAlgebra` | `R`, `inst` | `ℕ`, `R` | ✓ |
+| `ULift.addLeftCancelMonoid` | `α`, `inst` | `ULift α` | ✓ |
+| `Lex.instIsRightCancelAdd` | `α`, `inst₁`, `inst₂` | `Lex α` | ✗ |
+| `Matrix.isScalarTower` | `R`, `S`, `α`, `inst₁`, `inst₃`, `inst₂` | `R`, `S`, `Matrix m n α` | ✗ |
+| `IsNoetherianRing.wfDvdMonoid` | `R`, `inst₁` | `R` | ✓ |
+
+| Instance | Class-typed args…¹ | Source's type | C2 |
+|:--- |:--- |:--- |:--- |
+| `IsTopologicalGroup.toContinuousInv` | `inst₁`, `inst₂` | `@IsTopologicalGroup G inst₁ inst₂` | ✓ |
+| `Semiring.toNatAlgebra` | _(none)_ | `@Semiring R` | ✓ |
+| `ULift.addLeftCancelMonoid` | _(none)_ | `@ULift α` | ✓ |
+| `Lex.instIsRightCancelAdd` | `inst₁` | `@IsRightCancelAdd α inst₁` | ✓ |
+| `Matrix.isScalarTower` | `inst₁`, `inst₂`, `inst₃` | `@IsScalarTower R S α inst₁ inst₃ inst₂` | ✓ |
+| `IsNoetherianRing.wfDvdMonoid` | `inst₁`, `inst₂` | `@IsNoetherianRing R (CommSemiring.toSemiring R inst₁)` | ✗ |
+
+¹Class-typed args of the declaration other than the source.
+
 ```
--- instance IsPreorder.toIsTrans {α r} [IsPreorder α r] : IsTrans α r
-isWeakeningEdge (IsPreorder α r) (IsTrans α r) #[] = true
-
--- instance Module.toDistribMulAction {R M} [Semiring R] [AddCommMonoid M]
---   [Module R M] : DistribMulAction R M
-isWeakeningEdge (Module R M) (DistribMulAction R M) #[Semiring R, AddCommMonoid M] = true
-
--- instance asymm_of_isTrans_of_irrefl [IsTrans α r] [Std.Irrefl r] : Std.Asymm r
-isWeakeningEdge (Std.Irrefl r) (Std.Asymm r) #[IsTrans α r] = false -- source doesn't contain
-                                                                    -- IsTrans α r
-
--- instance Prod.instMonoid [Monoid M] [Monoid N] : Monoid (M × N)
-isWeakeningEdge (Monoid N) (Monoid (M × N)) #[Monoid M] = false -- different carrier
-
--- artificial examples
-isWeakeningEdge (IsEmpty α) (IsWellOrder α r) #[] = false -- fresh `r`
-isWeakeningEdge (Std.Irrefl r) (Std.Refl rᶜ) #[] = false -- transformed relation
+instance IsTopologicalGroup.toContinuousInv {G : Type*} {inst₁ : TopologicalSpace G}
+  {inst₂ : Group G} [self : @IsTopologicalGroup G inst₁ inst₂] : ContinuousInv G
+instance Semiring.toNatAlgebra {R : Type*} [inst : @Semiring R] : Algebra ℕ R
+instance ULift.addLeftCancelMonoid {α : Type*}
+  [inst : @AddLeftCancelMonoid α] : AddLeftCancelMonoid (ULift α)
+instance Lex.instIsRightCancelAdd {α : Type*} [inst₁ : Add α]
+  [inst₂ : @IsRightCancelAdd α inst₁] : IsRightCancelAdd (Lex α)
+instance Matrix.isScalarTower {m n R S α : Type*}
+  [inst₁ : SMul R S] [inst₂ : SMul R α] [inst₃ : SMul S α]
+  [inst₄ : @IsScalarTower R S α inst₁ inst₃ inst₂] : IsScalarTower R S (Matrix m n α)
+instance IsNoetherianRing.wfDvdMonoid {R : Type u_1} [inst₁ : CommSemiring R]
+  [inst₂ : @IsDomain R (@CommSemiring.toSemiring R inst₁)]
+  [inst₃ : @IsNoetherianRing R (@CommSemiring.toSemiring R inst₁)] : WfDvdMonoid R
 ```
 -/
 public def isWeakeningEdge (s t : Expr) (otherPrems : Array Expr) :
     MetaM Bool := do
-  -- Condition 1: If target class app has no carriers, reject (e.g., Nat.AtLeastTwo n)
-  if (← carrierArgs t).isEmpty then return false
-  -- Condition 2: All of target's non-inst args must be defeq to some arg of source
   let sArgs := s.getAppArgs
   let tArgs ← frameArgs t
-  let weakening ← tArgs.allM fun tArg => sArgs.anyM fun sArg => isDefEq tArg sArg
-  unless weakening do return false -- if not a weakening, reject
-  -- every class-typed arg of declaration (other than `s`) must be contained in `s`'s type
-  let allSrcArgs := s.getAppArgs
-  return otherPrems.all fun p => allSrcArgs.contains p
+  let isClosed (e : Expr) : MetaM Bool := pure (!e.hasFVar && !e.hasExprMVar)
+  -- Condition 1
+  unless ← tArgs.allM (statableFrom sArgs isClosed) do return false
+  -- Condition 2: Every class-typed arg of declaration (other than `s`) must be contained in `s`'s
+  -- type.
+  return otherPrems.all fun p => sArgs.contains p
 
-/--
-Usually, canonicalized arguments are plain bvars. However, sometimes they may actually "structured",
-i.e., an application.
 
-If $n≥1$ canonicalized arguments are applications, this function returns the $n$ heads of those
-applications (one per structured canonicalized argument, always the head of the outer-most
-application). Otherwise it returns the empty set.
-
----
-**Examples**
-
-```
-ContinuousAlgEquivClass α β γ δ       → {}
-Small (Subtype α)                     → {Subtype}
-HasLimitsOfShape (Discrete PEmpty) α  → {Discrete}
-QuasiFinite α (OreLocalization β γ)   → {OreLocalization}
-```
--/
-def structuredPatternHeads (v : Vertex) : HashSet Name :=
-  v.pattern.foldl (init := {}) fun s e =>
-    if e.getAppArgs.isEmpty then s
-    else match e.getAppFn.constName? with
-      | some n => s.insert n
-      | none => s
 
 /--
 Processes a declaration into an edge for the class graph, if appropriate.
@@ -238,16 +307,19 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     -- source, if any, must be the last class premise
     let some src := classPrems.back? | return none
     let srcT ← src.fvarId!.getType
-    let srcApp ← toKey srcT
+    let srcK ← toKey srcT
     -- A family premise (e.g. `[∀ i, C (f i)]`) is not the same as `C`, so recording `C → tgt` would
     -- be disingenuous.
-    if srcApp.familyArity > 0 then return none
+    if srcK.familyArity > 0 then return none
     unless ← isWeakeningEdge srcT concl classPrems.pop do return none
-    let srcV := srcApp.toVertex
-    let tgtV ← toVertex concl
-    let srcHeads := structuredPatternHeads srcV
-    if (structuredPatternHeads tgtV).any (fun h => !srcHeads.contains h) then return none
-    return some { src := srcV, tgt := tgtV }
+    let tgtK ← toKey concl
+    -- Opaque carriers, i.e., carriers whose structure `canonArg` could not preserve, are abstracted
+    -- to bvars, lead to `subst` entries that aren't just fvars. For example: `Class1 (Class2 α)`
+    -- (not opaque) gets `pattern := #[Class2 (bvar 0)]` and `subst := #[α]`, while
+    -- `Class1 (OpaqueSomething α)` gets `pattern := #[bvar 0]` and `subst := #[OpaqueSomething α]`.
+    -- We don't want to accept this latter kind of target. The same goes for the source.
+    unless srcK.subst.all (·.isFVar) && tgtK.subst.all (·.isFVar) do return none
+    return some { src := srcK.toVertex, tgt := tgtK.toVertex }
 
 /-! ## Build -/
 

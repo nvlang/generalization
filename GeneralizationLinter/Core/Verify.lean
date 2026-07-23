@@ -34,7 +34,7 @@ public def suppressingDiagnostics {m : Type → Type} {α : Type} [Monad m] [Mon
 public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool :=
   suppressingDiagnostics do
     let some val := declInfo.value? (allowOpaque := true) | return false
-    try verifyWeakening declInfo.type val c.binder.idx c.replacementNames catch _ => return false
+    try verifyWeakening declInfo.type val c.binder.idx c.replacementKeys catch _ => return false
 
 public structure ConfirmedWeakening where
   private mk ::
@@ -71,14 +71,19 @@ def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate
 def demoteVacuousWeakenings (declInfo : ConstantInfo) (candidates : Array Candidate) :
     MetaM (Array Candidate) :=
   candidates.filterMapM fun c => do
-    if c.replacementNames.isEmpty then return some c
-    unless (← replacementsRedundant declInfo.type c.binder.idx c.replacementNames) do return some c
+    if c.replacementKeys.isEmpty then return some c
+    unless (← replacementsRedundant declInfo.type c.binder.idx c.replacementKeys) do return some c
     let d := { c with shape := .drop }
     return if (← weakeningHolds declInfo d) then some d else none
 
 
 /--
 Returns unverified weakening suggestion candidates for a given declaration.
+
+---
+**Implementation notes**
+
+TODO
 -/
 public def meetCandidates (config : LinterConfig) (G : ClassGraph) (declInfo : ConstantInfo) :
     MetaM (Array Candidate) := do

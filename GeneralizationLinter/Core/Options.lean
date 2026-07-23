@@ -160,5 +160,6 @@ public def linterConfigOfOptions (opts : Lean.Options) : LinterConfig :=
     perDeclHeartbeats := generalizeTypeclasses.perDeclHeartbeats.get opts,
     verify := generalizeTypeclasses.verify.get opts,
     subsumption := generalizeTypeclasses.subsumption.get opts,
-    conclusionGuard := generalizeTypeclasses.conclusionGuard.get opts
+    conclusionGuard := generalizeTypeclasses.conclusionGuard.get opts,
+    vacuityGuard := generalizeTypeclasses.vacuityGuard.get opts
   }

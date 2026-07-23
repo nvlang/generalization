@@ -140,16 +140,6 @@ public structure Key extends Vertex where
   | `Monoid (List α)` | `#[List (bvar 0)]` | `#[α]` |
   | `Monoid (List (List (α × β)))` | `#[List (List ((bvar 0) × (bvar 1)))]` | `#[α, β]` |
   | `Module (α × β) M` | `#[(bvar 0) × (bvar 1), bvar 2]` | `#[α, β, M]` |
-
-  ---
-  **Implementation notes**
-
-  This property is currently unused. It's written to by `reifyVert`, but never read. This is because
-  the functions that would need it have access to the original class applications whose concrete
-  terms this field contains, so these functions just use that instead, since it's somewhat simpler.
-  However, `subst` could become useful in the future, if we ever try to transport arguments across
-  weakening edges (so that a weakening like `[Class A B] ↝ [Class' B A]` can be distinguished from a
-  weakening like `[Class A B] ↝ [Class' A B]`).
   -/
   subst : Array Expr
 
