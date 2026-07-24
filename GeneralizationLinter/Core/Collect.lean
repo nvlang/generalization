@@ -216,36 +216,6 @@ between two main cases:
     class-typed argument. This happens when the junction is a confluence, and currently also when it
     is a conditional tributary junction.
 
-> Continuing our example, `walk binderIdOf proof` would do the following (we'll omit `binderIdOf` as
-> an argument below):
->
-> * `walk binderIdOf proof` ⟶ `.app` branch:
->   * `route R'` ⟶ `walk R'` ⟶ `pure ()` (do nothing)
->   * `route M'` ⟶ `walk M'` ⟶ `pure ()` (do nothing)
->   * `route "(@AddMonoid.toAddZeroClass M' (…))"`: class-typed, so
->     * `collect "(@AddMonoid.toAddZeroClass M' (…))" none`: a fresh chain; head := `AddZeroClass
->       M'`; source = "(@SubNegMonoid.toAddMonoid M' (…))" (carrier ✓, arity ✓ ⟹ head propagates)
->       * `collect "(@SubNegMonoid.toAddMonoid M' (…))" (some "AddZeroClass M'")`: head
->         `AddZeroClass M'` (propagated); source = "(@AddGroup.toSubNegMonoid M' (…))" (carrier ✓,
->         arity ✓ ⟹ head propagates)
->         * `collect "(@AddGroup.toSubNegMonoid M' (…))" (some "AddZeroClass M'")`: head
->           `AddZeroClass M'` (propagated); source = "(@AddCommGroup.toAddGroup M' inst₂')" (carrier
->           ✓, arity ✓ ⟹ head propagates)
->           * `collect "(@AddCommGroup.toAddGroup M' inst₂')" (some "AddZeroClass M'")`: head
->             `AddZeroClass M'` (propagated); source = inst₂' (carrier ✓, arity ✓ ⟹ head propagates)
->             * `collect inst₂' (some "AddZeroClass M'")`: the head is the root binder `inst₂'` ⟹
->               **record** `{ head := AddZeroClass M', inst := inst₂' }`
->             * `route M'` ⟶ `walk M'` ⟶ `pure ()` (do nothing)
->           * `route M'` ⟶ `walk M'` ⟶ `pure ()` (do nothing)
->         * `route M'` ⟶ `walk M'` ⟶ `pure ()` (do nothing)
->       * `route M'` ⟶ `walk M'` ⟶ `pure ()` (do nothing)
->   * `route "(@DistribMulAction.toDistribSMul R' M' (…) (…) (…))"`: class-typed, so
->     * … (omitted for the sake of brevity)
->   * `route r'` ⟶ `walk r'` ⟶ `pure ()` (do nothing)
->   * `route m'` ⟶ `walk m'` ⟶ `pure ()` (do nothing)
->   * `route m'` ⟶ `walk m'` ⟶ `pure ()` (do nothing)
->   * `walk @smul_add` ⟶ `pure ()` (do nothing)
-
 Once the `MIChain`s have been collected, `getMIChains` returns them. We then pass the chains to
 `getReqs`, which associates each chain to the corresponding `TargetedBinder`. It then converts each
 chain to a `Requirement`, and returns the requirements as an array.
@@ -331,8 +301,8 @@ statement.
   binders-and-requirements collection pipeline.
 * The fact that each `Requirement` is associated with a specific `TargetedBinder` is technically an
   unnecessary restriction on the kinds of weakenings the linter can suggest, but it simplifies the
-  search for weakenings from general abduction to computing some meets, and actually doesn't reduce
-  the quality of the suggestions much at all (see thesis, #TODO: specific reference).
+  search for weakenings from general abduction to computing some meets, and we find that it doesn't
+  reduce the quality of the suggestions too much.
 
 ---
 **Example**
@@ -415,24 +385,6 @@ public def getTargetedBinders (decl : Expr) : MetaM (Array TargetedBinder) := do
         }
     return binders
 
-/--
-Get the (instance-implicit) instance arguments of an application `f a₀ … aₙ`.
-
----
-**Implementation notes**
-
-We don't verify that the instance-implicit arguments are class-typed here, and defer this
-responsibility to the callers instead. There's currently one non-class typed instance-implicit
-binder across all of Mathlib, in `CategoryTheory.Bundled.of`.
--/
-def getAppIIArgs (app : Expr) : MetaM (Array Expr) := do
-  let args := app.getAppArgs
-  let pinfos := (← getFunInfo app.getAppFn).paramInfo
-  let mut out : Array Expr := #[]
-  for h : i in [0:args.size] do
-    if (pinfos[i]?.map (·.binderInfo.isInstImplicit)).getD false then out := out.push args[i]
-  return out
-
 initialize declSourceCacheRef : IO.Ref (HashMap Name (Option Nat)) ← IO.mkRef {}
 
 /--
@@ -492,6 +444,48 @@ def sourceArg? (e : Expr) : MetaM (Option Expr) := do
 private abbrev CollectM := StateRefT (Array MIChain) MetaM
 
 /--
+Does the constant `name` have any `outParam` or `semiOutParam` parameter?
+
+---
+**Examples**
+
+```
+let env ← getEnv
+-- class Monoid (M : Type u) : Type u
+hasDispatchSlot env `Monoid = false
+-- class MulHomClass (F : Type u) (M : outParam (Type v)) (N : outParam (Type w))
+--   [Mul M] [Mul N] [FunLike F M N] : Prop
+hasDispatchSlot env `MulHomClass = true
+-- class SetLike (A : Type u) (B : outParam (Type v)) : Type (max u v)
+hasDispatchSlot env `SetLike = true
+-- class Coe (α : semiOutParam (Sort u)) (β : Sort v) : Sort (max (max 1 u) v)
+hasDispatchSlot env `Coe = true
+-- class HMul (α : Type u) (β : Type v) (γ : outParam (Type w)) : Type (max (max u v) w)
+hasDispatchSlot env `HMul = true
+-- class DFunLike (F : Sort u) (α : outParam (Sort v)) (β : outParam (α → Sort w)) :
+--   Sort (max (max (max 1 u) v) w)
+hasDispatchSlot env `DFunLike = true
+-- abbrev FunLike (F : Sort u) (α : Sort v) (β : Sort w) : Sort (max (max (max 1 u) v) w)
+hasDispatchSlot env `FunLike = false -- even though `FunLike` is an abbrev of `DFunLike`
+```
+
+**Note:** The case of `FunLike` is not important for us, because `FunLike` would get reduced to
+`DFunLike` before `hasDispatchSlot` would ever be called on it.
+-/
+private def hasDispatchSlot (env : Environment) (name : Name) : Bool :=
+  match env.find? name with
+  | some info => go info.type
+  | none => false
+where
+  go : Expr → Bool
+    | .forallE _ bt b _ =>
+      bt.consumeMData.isAppOfArity ``outParam 1 ||
+      bt.consumeMData.isAppOfArity ``semiOutParam 1 ||
+      go b
+    | _ => false
+
+
+/--
 Returns `some head` if `head` should be propagated through a descent step, or `none` if it
 shouldn't. If it shouldn't, that means `collect` will drop the chain and start a new one.
 
@@ -499,22 +493,35 @@ shouldn't. If it shouldn't, that means `collect` will drop the chain and start a
 **Implementation notes**
 
 `propagatedHead?` returns `none` iff
-1.  the transformation `linkT` contains "open" arguments (arguments that contain ≥1 fvars) that are
-    not "statable" using the source's arguments, or
-2.  the transformation's conclusion has more open arguments than the source.
+1.  the transformation `linkT` contains arguments that are not "statable" using the source's
+    arguments, or
+2.  the `head` has more open arguments than the source and has an `outParam` or `semiOutParam`.
+
+Condition 1 is inherited from condition 1 of `isWeakeningEdge`.
+Condition 2 is a heuristic that aims to reduce non-idiomatic suggestions like `Mul α ↝ HMul α α α`
+or `Preorder α ↝ Trans LT.lt LT.lt LT.lt`.
+
+**Note:** Condition 2 of `isWeakeningEdge` is encoded separately in `sourceArg?`.
 
 ---
 **Examples**
 
-* For the transformation from `CommMonoid M` to `Monoid M`, `propagatedHead?` returns `some head`.
-* For the transformation from `Nontrivial (Sub' R M)` to `IsSimpleModule R M`, `propagatedHead?`
-  returns #TODO.
-* For the transformation from `IsAtomic αᵒᵈ` to `IsCoatomic α`, `propagatedHead?` returns #TODO.
-* For the transformation from `Mul α` to `HMul α α α`, `propagatedHead?` returns `none`, due to
-  condition 2.
+Examples where `propagatedHead?` returns `some head`:
+
+* `CommMonoid M ↝ Monoid M`
+* `Mul R ↝ SMul R R`
+* `IsSimpleModule R M ↝ Nontrivial (Sub' R M)`
+* `Algebra R A ↝ IsScalarTower R A A`
+* `MonoidHomClass F M N ↝ MulHomClass F M N`
+
+Examples where `propagatedHead?` returns `none`:
+
+* `IsCoatomic α ↝ IsAtomic αᵒᵈ` (condition 1)
+* `Monad m ↝ ForIn m ρ α` (conditions 1 and 2, though condition 1 short-circuits already)
+* `Mul α ↝ HMul α α α` (condition 2)
+* `Preorder α ↝ Trans LT.lt LT.lt LT.lt` (condition 2)
 -/
-def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) :
-    MetaM (Option Key) := do
+def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) : MetaM (Option Key) := do
   let srcT ← whnf (← inferType src)
   let srcArgs := srcT.getAppArgs
   -- The transformation's open frame args that are not syntactically equal to one of `src`'s args.
@@ -523,14 +530,16 @@ def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) :
   -- we know for sure that condition 1 is satisfied. If not, we need to check more carefully.
   unless rough.isEmpty do
     let srcSubjects ← frameArgs srcT
-    let closedOk (e : Expr) : MetaM Bool := pure (!e.hasFVar && !srcSubjects.any (·.occurs e))
-    unless ← rough.allM (statableFrom srcArgs closedOk) do
+    let isClosed (e : Expr) : MetaM Bool := pure (!e.hasFVar && !srcSubjects.any (·.occurs e))
+    unless ← rough.allM (statableFrom srcArgs isClosed) do
       return none
-  -- If `head` has more open key args than the source, we drop the chain. That's mostly because we
-  -- don't want to be suggesting weakenings like `[Mul α] ↝ [HMul α α α]`.
+  -- If `head` has more open key args than the source _and_ has an `outParam` or `semiOutParam`, we
+  -- drop the chain. That's mostly because we don't want to be suggesting weakenings like `[Mul α] ↝
+  -- [HMul α α α]`.
   let srcKey ← toKey srcT
   let openArity (k : Key) : Nat := k.pattern.countP (·.hasLooseBVars)
-  return if openArity head > openArity srcKey then none else some head
+  if openArity head ≤ openArity srcKey then return some head
+  return if hasDispatchSlot (← getEnv) head.name then none else some head
 
 mutual
 
@@ -550,35 +559,7 @@ If `e` corresponds to a maximal instance chain, `collect` will record that insta
 `MIChain`. If `e` does not correspond to a maximal instance chain, then `collect` will recursively
 find any maximal instance chains that it may contain.
 
----
-**Examples**
-
-**Pi instance:** TODO
-
-```
-theorem piThm {ι : Type u} {f : ι → Type v} [inst : ∀ i, Group (f i)] : Mul (∀ i, f i) :=
-  inferInstance
-```
-
-```
-════ piThm ════
-binders: [#0 Group]
-proof: inferInstance
-── proof ──
-▸ chain: Mul ((i : ι) → f i)
-⑂ Pi.instMul — confluence: head discarded, args restart fresh
-  λ i
-  ▸ chain: Mul (f i)
-  ↓ MulOne.toMul             carrier ✓ arity ✓
-  ↓ MulOneClass.toMulOne     carrier ✓ arity ✓
-  ↓ Monoid.toMulOneClass     carrier ✓ arity ✓
-  ↓ DivInvMonoid.toMonoid    carrier ✓ arity ✓
-  ↓ Group.toDivInvMonoid     carrier ✓ arity ✓
-  ● inst (#0) ⇒ RECORD Mul (f i)
-requirements: #0 [Group] ⟸ Mul
-```
-
-TODO
+#TODO
 -/
 private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     (chainHead? : Option Key) : CollectM Unit := do
@@ -619,6 +600,9 @@ private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     -- confluence: start new chain for each arg
     for arg in args do route binderIdOf arg
 
+/--
+#TODO
+-/
 private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
   match e with
@@ -641,6 +625,9 @@ private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
 
 end
 
+/--
+#TODO
+-/
 public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
     MetaM (Array MIChain) := do
   forallTelescope decl fun xs concl => do
@@ -659,6 +646,9 @@ public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
     let (_, chains) ← go.run #[]
     return chains
 
+/--
+#TODO
+-/
 public def getReqs (binders : Array TargetedBinder) (chains : Array MIChain) :
     MetaM (Array Requirement) := do
   let binderOfId : HashMap BinderId TargetedBinder :=
@@ -667,9 +657,3 @@ public def getReqs (binders : Array TargetedBinder) (chains : Array MIChain) :
     match binderOfId[c.inst]? with
     | some b => some { toKey := c.head, binder := b }
     | none => none
-
-public def targetedBinderHeads (const : ConstantInfo) : MetaM (Array (Option Name)) :=
-  targetedBinderTelescope const.type fun lds _ => return lds.map (·.type.getAppFn.constName?)
-
-public def targetedBinderCount (const : ConstantInfo) : MetaM Nat :=
-  return (← targetedBinderHeads const).size

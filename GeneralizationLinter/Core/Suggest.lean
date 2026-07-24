@@ -18,9 +18,9 @@ public inductive WeakeningShape where
   /-- Binder is entirely unused, and can therefore be dropped (removed). -/
   | drop
   /-- Binder can be weakened to `target`. -/
-  | weaken (target : Key)
+  | weaken (target : Vertex)
   /-- Binder can be weakened by splitting it up into `targets`. -/
-  | split (targets : Array Key)
+  | split (targets : Array Vertex)
   deriving Inhabited
 
 /-- An unverified weakening proposal. See also `ConfirmedWeakening`. -/
@@ -31,8 +31,8 @@ public structure Candidate where
   shape : WeakeningShape
   deriving Inhabited
 
-/-- The `Keys`s of the classes of the proposed replacements. -/
-public def Candidate.replacementKeys (c : Candidate) : Array Key :=
+/-- The `Vertex`es of the classes of the proposed replacements. -/
+public def Candidate.replacements (c : Candidate) : Array Vertex :=
   match c.shape with
   | .drop => #[]
   | .weaken t => #[t]
@@ -42,14 +42,14 @@ public def Candidate.replacementKeys (c : Candidate) : Array Key :=
 public def Candidate.replacementNames (c : Candidate) : Array Name :=
   match c.shape with
   | .drop => #[]
-  | .weaken t => #[t.toVertex.name]
-  | .split ts => ts.map (·.toVertex.name)
+  | .weaken t => #[t.name]
+  | .split ts => ts.map (·.name)
 
 /--
 If `c` is a weakening candidate proposing to weaken a binder to a specific target `t`, return `some
 t`. If `c` proposes dropping the binder or splitting it, return `none`.
 -/
-public def Candidate.singleWeakening? (c : Candidate) : Option Key :=
+public def Candidate.singleWeakening? (c : Candidate) : Option Vertex :=
   match c.shape with
   | .weaken t => some t
   | _ => none
@@ -193,7 +193,7 @@ alternatives.
 def sccDemotedHeads : List Name := [`NSMul, `ZSMul, `NPow, `ZPow, `OfNat, `Trans]
 
 /--
-TODO
+#TODO
 -/
 def sccRepresentative (scc : Array Vertex) : Option Vertex :=
   let pick (vertices : Array Vertex) : Option Vertex := vertices.foldl (init := none) fun best v =>
@@ -217,7 +217,7 @@ def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vert
   match mca with
   | #[scc] => sccRepresentative scc
   | _ => none -- `mca` is empty or has size ≥2
-  -- TODO (low priority): If `mca` has size ≥2, it means there's multiple incomparable minimal
+  -- #TODO (low priority): If `mca` has size ≥2, it means there's multiple incomparable minimal
   -- common ancestors, each of which single-handedly satisfies all requirements (see
   -- `minCommonAncestors`'s docstring for an example). Instead of dropping them all and pretend
   -- there's no possible weakenings, we could try to simply present them as multiple viable options
@@ -277,11 +277,7 @@ def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts 
     | none, some m => some #[m]
     | none, none => none
 
-/-- Reify `v` into a `Key` using the `subst` args from `b`. -/
-def reifyVert (b : TargetedBinder) (v : Vertex) : Key :=
-  { toVertex := v, subst := b.subst }
-
-/-- TODO -/
+/-- #TODO -/
 public def candidates (graph : ClassGraph) (binders : Array TargetedBinder)
     (reqs : Array Requirement) (cfg : LinterConfig := {}) (includeSubsumers : Bool := true) :
     Array Candidate := Id.run do
@@ -292,9 +288,9 @@ public def candidates (graph : ClassGraph) (binders : Array TargetedBinder)
     let bReqVerts : HashSet Vertex := reqs.foldl (init := {}) fun bReqVerts' req =>
       if req.binder.fvar == b.fvar then bReqVerts'.insert req.toVertex else bReqVerts'
     let some meets := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
-    let shape := match meets.map (reifyVert b) with
+    let shape := match meets with
       | #[] => WeakeningShape.drop
-      | #[reifiedMeet] => WeakeningShape.weaken reifiedMeet
-      | reifiedMeets => WeakeningShape.split reifiedMeets
+      | #[meet] => WeakeningShape.weaken meet
+      | meets => WeakeningShape.split meets
     out := out.push { binder := b, shape }
   return out

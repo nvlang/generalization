@@ -85,8 +85,9 @@ isSynonymFormer `OrderDual  -- `true`
 -/
 public def isSynonymFormer (h : Name) : MetaM Bool := do
   if let some r := (← synonymFormerCacheRef.get)[h]? then return r
+  let some info := (← getEnv).find? h | return false
   let r ← try
-      let some (.defnInfo di) := (← getEnv).find? h | pure false
+      let .defnInfo di := info | pure false
       forallTelescope di.type fun args _ => do
         let app := mkAppN (mkConst h (di.levelParams.map (Level.param ·))) args
         let red ← withTransparency .all (whnf app)
@@ -107,20 +108,38 @@ partial def recoverableFrom (fvar : FVarId) (e : Expr) : Bool :=
   match e with
   | .forallE _ binderType body _ => recoverableFrom fvar binderType || recoverableFrom fvar body
   | _ =>
-    let fn := e.getAppFn
-    if fn.isConst then
-      e.getAppArgs.any fun arg => arg == .fvar fvar || recoverableFrom fvar arg
-    else false -- the safe default
+    if e == .fvar fvar then true
+    else
+      if e.getAppFn.isConst then
+        e.getAppArgs.any (recoverableFrom fvar)
+      else false -- the safe default
 
 initialize keySlotsCacheRef : IO.Ref (HashMap Name (Array Bool)) ← IO.mkRef {}
 
 /--
 Given a head constant `head`, return a boolean mask `#[b₁ … bₙ]` (`bᵢ : Bool`) such that `bᵢ` is
 `true` iff the `i`th slot of `head` is one that should be kept when converting an application of
-`head` into a `Key`.
+`head` into a `Key` or into an entry of a different `Key`'s `pattern`. Note that `keySlots` is used
+not only for classes, but for all kinds of type formers.
 
 Explicit slots are always kept, instance implicit slots are always dropped, and implicit and strict
 implicit slots are dropped only if their values are recoverable from the values of the kept slots.
+
+---
+**Examples**
+
+```
+-- class Module (R M : Type*) [Semiring R] [AddCommMonoid M]
+keySlots `Module = #[true, true, false, false]
+-- class Small (α : Type*)
+keySlots `Small = #[true]
+-- structure Subtype {α : Sort u} (p : α → Prop)
+keySlots `Subtype = #[true, true]
+-- class IsWellFounded (α : Type*) (r : α → α → Prop)
+keySlots `IsWellFounded = #[true, true]
+-- structure Submodule (R M : Type*) [Semiring R] [AddCommMonoid M] [Module R M]
+keySlots `Submodule = #[true, true, false, false, false]
+```
 -/
 def keySlots (head : Name) : MetaM (Array Bool) := do
   if let some m := (← keySlotsCacheRef.get)[head]? then return m -- cache hit
@@ -157,6 +176,25 @@ def keyArgs (fn : Expr) (vals : Array Expr) : MetaM (Array Expr) := do
     | none => pure #[] -- non-const head ⟹ keep all vals
   pure <| vals.zipIdx.filterMap fun (val, i) =>
     if slots[i]?.getD true then some val else none -- keep by default
+
+
+def frameSlots? (name : Name) : MetaM (Option (Array Bool)) := do
+  let some info := (← getEnv).find? name | return none
+  forallTelescope info.type fun params _ =>
+    some <$> params.mapM fun p => return !(← p.fvarId!.getDecl).binderInfo.isInstImplicit
+
+def placeAtSlots (mask : Array Bool) (vals : Array Expr) : Option (Array (Option Expr)) := Id.run do
+  let mut slots : Array (Option Expr) := #[]
+  let mut i : Nat := 0
+  for b in mask do
+    if b then
+      let some v := vals[i]? | return none
+      slots := slots.push (some v)
+      i := i + 1
+    else
+      slots := slots.push none
+  if i == vals.size then return some slots else return none
+
 
 /--
 Used to strip the universe-level arguments off the heads of type formers used within a key slot. We
@@ -282,13 +320,51 @@ Given an `Expr` of a class application, canonicalize it into a `Key`.
 * For a family class binder like `∀ prefix, C args`, the body (`C args`) determines the `Vertex`
   fields, while the prefix is used to abstract the
 
-  TODO: finish this docstring
+  #TODO: finish this docstring
 
 ---
-**Precondition**
+**Examples**
 
-* `Expr` must be a class application. It should've been extracted from an instance implicit binder
-  of a theorem/lemma.
+```
+-- class Module (R M : Type*) [Semiring R] [AddCommMonoid M]
+toKey ‹@Module R M inst₁ inst₂› = {
+  -- `Vertex` fields
+  name := `Module,
+  levels := .polymorphic
+  pattern := #[.bvar 0, .bvar 1],
+  -- `Key` fields
+  subst := #[R, M],
+  familyArity := 0,
+}
+
+-- class Small (α : Type*)
+-- structure Subtype {α : Sort u} (p : α → Prop)
+toKey ‹@Small (@Subtype α p)› = {
+  -- `Vertex` fields
+  name := `Small,
+  levels := .polymorphic
+  pattern := #[Subtype (.bvar 0)],
+  -- `Key` fields
+  subst := #[p],
+  familyArity := 0,
+}
+
+-- class IsWellFounded (α : Type*) (r : α → α → Prop)
+-- structure Submodule (R M : Type*) [Semiring R] [AddCommMonoid M] [Module R M]
+toKey ‹@IsWellFounded (@Submodule α α inst₁ inst₂ inst₃) β› = {
+  -- `Vertex` fields
+  name := `IsWellFounded,
+  levels := .polymorphic
+  pattern := #[Submodule (.bvar 0) (.bvar 0), .bvar 1],
+  -- `Key` fields
+  subst := #[α, β]
+  familyArity := 0,
+}
+```
+
+Note how the class applications `Small (Subtype p)` and `IsWellFounded (Submodule α α) β` get
+indexed in the class graph in accordance with what `keySlots` returns for the type formers `Subtype`
+and `Submodule`, which are themselves not classes.
 -/
 public def toKey (e: Expr) : MetaM Key := do
   let e0 := e.consumeMData
@@ -318,16 +394,10 @@ where
     return { toVertex := v, subst }
 
 
-/--
-Convert an `Expr` like `Module R M` to a vertex ``{ name := `Module, pattern := #[.bvar 0, .bvar 1],
-levels := polymorphic }``.
--/
-public def toVertex (e : Expr) : MetaM Vertex := return (← toKey e).toVertex
-
 /-! ## Reification -/
 
 /--
-TODO
+#TODO
 -/
 def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
   let some const := (← getEnv).find? name | return none
@@ -362,224 +432,68 @@ Note that, in constructing its output, `reifyClass` may perform instance synthes
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
 (instance metavariables spawned by `reifyClassGo`) via instance synthesis.
 -/
-public partial def reifyClass (name : Name) (frame : Array Expr) (useKeySlots : Bool := false) :
+public def reifyClass (name : Name) (vals : Array Expr) (useKeySlots : Bool := false) :
     MetaM (Option Expr) := do
+  let some mask ← (if useKeySlots then some <$> keySlots name else frameSlots? name) | return none
+  let some slots := placeAtSlots mask vals | return none
   let some (head, sig) ← freshHeadAndSig? name | return none
-  let keep ← if useKeySlots then keySlots name else pure #[]
-  reifyClassGo head frame sig 0 0 #[] #[] keep useKeySlots
-where
-  /--
-  Helper for `reifyClass`.
-
-  ---
-  **Example (trace)**
-
-  Continuing the example from `reifyClass`, suppose `reifyClassGo` is tasked with reifying `Module S
-  A`, with the following local context previously established by `rebuiltStatementType`'s telescope
-  on `thm`'s signature:
-
-  * `_uniq.5225` is the free variable assigned to `{S : Type 0}`. We'll write `S` instead of
-    `_uniq.5225`.
-  * `_uniq.5226` is the free variable assigned to `{A : Type w}`. We'll write `A` instead of
-    `_uniq.5226`.
-  * `_uniq.5227` is the free variable assigned to `[CommSemiring S]`. We'll write `inst₁` instead of
-    `_uniq.5227`.
-  * `_uniq.5228` is the free variable assigned to `[Semiring A]`. We'll write `inst₂` instead of
-    `_uniq.5228`.
-  * `_uniq.5229` is the free variable assigned to `[Algebra S A]` (type: `@Algebra S A inst₁
-    inst₂`). We'll write `inst₃` instead of `_uniq.5229`.
-  * `_uniq.5230` is the free variable assigned to `(x : A)`. This free variable is not relevant for
-    us here.
-
-  Now, before calling `reifyClassGo`, `reifyClass` will have called ``freshHeadAndSig? `Module``.
-  This will have fetched the following declaration
-
-  ```
-  class Module (R : Type u) (M : Type v) [Semiring R] [AddCommMonoid M] extends … where …
-  ```
-
-  ...and set ``head := `Module.{?u, ?v}`` and `sig := "(R : Type ?u) → (M : Type ?v) →
-  [Semiring.{?u} R] → [AddCommMonoid.{?v} M] → Sort.{max (succ ?u) (succ ?v)}"`, where we're writing
-  `"…"` to refer to the `Expr` corresponding to `…`, and `?u` and `?v` to refer to the universe
-  level metavariables `?_uniq.5231` and `?_uniq.5232`.
-
-  **Note (Instance Metavariables):** We write `?i₁` for `?_uniq.5233` and `?i₂` for `?_uniq.5234`.
-  Each of these is an instance metavariable that we spawn within `reifyClassGo`, required to have
-  type `Semiring.{?u} S` in the case of `?i₁` and `AddCommMonoid.{?v} A` in the case of `?i₂`.
-  Instance synthesis will be used to synthesize specific values for these metavariables from the
-  local context, and will assign `?i₁ := CommSemiring.toSemiring.{?u} S inst₁` and `?i₂ :=
-  Semiring.toAddCommMonoid.{?v} A inst₂`.
-
-  **Note (Auto-Generated Hygienic Instance Names):** We write `` `inst1 `` instead of
-  `inst._@.Mathlib.Algebra.Module.Defs.2274493915._hygCtx._hyg.12`, the name Lean auto-generated for
-  the anonymous (i.e., not named by the user) binder `[Semiring R]` of `Module`'s declaration.
-  Similarly for `` `inst2 ``.
-
-  **Warning:** `inst₁` and `` `inst1 `` are not the same.
-
-  **Note:** In all of the calls of `reifyClassGo` below, the `head` argument is `` `Module.{?u,
-  ?v}``, and the `frame` argument is `#[S, A]`.
-
-  **1st call:** `reifyClassGo` gets called with `frameIdx = 0`, `appliedArgs = #[]`, `instMVars =
-  #[]`, and the following `sig'`:
-
-  ```
-  forallE `R (Type.{?u})                                -- (no binders in scope)
-    (forallE `M (Type.{?v})                             -- bvar 0 = `R
-      (forallE `inst1 (Semiring.{?u} (bvar 1))          -- bvar 0 = `M, bvar 1 = `R
-        (forallE `inst2 (AddCommMonoid.{?v} (bvar 1))   -- bvar 0 = `inst1, bvar 1 = `M, bvar 2 = `R
-          (Sort.{max (succ ?u) (succ ?v)}))))
-  ```
-
-  **Note:** The meaning of `bvar 0` (or `bvar 1`, `bvar 2`, etc.) depends on its location within the
-  expression. In general, `bvar 0` refers to the bound variable that got bound last (from the
-  perspective of the location of the `bvar 0` expression within the larger expression), `bvar 1` to
-  the one that got bound second last, etc.
-
-  **2nd call:** `reifyClassGo` gets called with `frameIdx = 1`, `appliedArgs = #[S]`, `instMVars =
-  #[]`, and the following `sig'`:
-
-  ```
-  forallE `M (Type.{?v})                              -- (no binders in scope)
-    (forallE `inst1 (Semiring.{?u} S)                 -- bvar 0 = `M
-      (forallE `inst2 (AddCommMonoid.{?v} (bvar 1))   -- bvar 0 = `inst1, bvar 1 = `M
-        (Sort.{max (succ ?u) (succ ?v)})))
-  ```
-
-  **3rd call:** `reifyClassGo` gets called with `frameIdx = 2`, `appliedArgs = #[S, A]`, `instMVars
-  = #[]`, and the following `sig'`:
-
-  ```
-  forallE `inst1 (Semiring.{?u} S)          -- (no binders in scope)
-    (forallE `inst2 (AddCommMonoid.{?v} A)  -- bvar 0 = `inst1
-      (Sort.{max (succ ?u) (succ ?v)}))
-  ```
-
-  **4th call:** `reifyClassGo` gets called with `frameIdx = 2`, `appliedArgs = #[S, A, ?i₁]`,
-  `instMVars = #[?i₁]`, and the following `sig'`:
-
-  ```
-  forallE `inst2 (AddCommMonoid.{?v} A)
-    (Sort.{max (succ ?u) (succ ?v)})
-  ```
-
-  **5th call:** `reifyClassGo` gets called with `frameIdx = 2`, `appliedArgs = #[S, A, ?i₁, ?i₂]`,
-  `instMVars = #[?i₁, ?i₂]`, and the following `sig'`:
-
-  ```
-  Sort.{max (succ ?u) (succ ?v)}
-  ```
-
-  **Result:** Since `reifyClassGo` is tail-recursive, all the calls technically output the exact
-  same result, which is also the final result: `some (Module.{0, w} S A (CommSemiring.toSemiring.{0}
-  S inst₁) (Semiring.toAddCommMonoid.{w} A inst₂))`. Note that the level metavariable `?u` got
-  unified with the concrete level `0`, and level metavariable `?v` got unified with the level
-  _parameter_ `w` of `thm`.
-  -/
-  reifyClassGo (head : Expr) (frame : Array Expr) (sig' : Expr) (slotIdx frameIdx : Nat)
-      (appliedArgs instMVars : Array Expr) (keep : Array Bool) (useKeySlots : Bool) :
-      MetaM (Option Expr) := do
-    match sig' with
-    -- Match outermost `.forallE` of `sig'`, thus peeling off the leftmost binder of `sig'` into
-    -- `binderType` and `binderInfo`, and leaving the rest of the signature in `body`.
-    | .forallE _ binderType body binderInfo =>
-      if binderInfo.isInstImplicit then
-        -- Instance-implicit binders get assigned metavariables for now, to be resolved by instance
-        -- synthesis later on.
-        let mvar ← mkFreshExprMVar binderType
-        reifyClassGo head frame (body.instantiate1 mvar)
-          (slotIdx + 1) frameIdx (appliedArgs.push mvar) (instMVars.push mvar) keep useKeySlots
-      -- If `keySlots` dropped this slot from the key, then `frame` doesn't carry any value for it.
-      -- Reconstruct it as a fresh metavariable; the recoverability that justified the drop to begin
-      -- with guarantees that we'll be able to recover its value.
-      else if useKeySlots && !(keep[slotIdx]?.getD true) then
-        let mvar ← mkFreshExprMVar binderType
-        reifyClassGo head frame (body.instantiate1 mvar) (slotIdx + 1) frameIdx
-          (appliedArgs.push mvar) instMVars keep useKeySlots
-      else
-        -- The next kept non-instance-implicit binder gets assigned the `frameIdx`th frame
-        -- argument.
-        if _ : frameIdx < frame.size then
-          let value := frame[frameIdx]
-          -- The `isDefEq` check is both a good sanity check, and pins metavariables for us.
-          unless ← isDefEq binderType (← inferType value) do return none
-          reifyClassGo head frame (body.instantiate1 value) (slotIdx + 1) (frameIdx + 1)
-            (appliedArgs.push value) instMVars keep useKeySlots
-        else return none
-    | _ =>
-      -- We've reached the end of the signature. Every frame arg must already have been consumed by
-      -- now, otherwise something went wrong and we return `none`.
-      unless frameIdx == frame.size do return none
-      for mvar in instMVars do
-        -- Synthesize an instance for each of the instance metavariables we created.
-        let some inst ← (try some <$> synthInstance (← instantiateMVars (← inferType mvar))
-          catch _ => pure none) | return none
-        -- Assign the instance to the instance metavariable.
-        mvar.mvarId!.assign inst
-      -- "Instantiate" (no relation to "instance" in the sense we're using it in) the metavariables
-      -- we just assigned, so that they're replaced with the instances we assigned.
-      let result ← instantiateMVars (mkAppN head appliedArgs)
-      -- If any `Expr` metavariables remain somehow, then something went wrong and we return `none`.
-      -- (Universe level metavariables in the result are perfectly fine though.)
-      if result.hasExprMVar then return none
-      -- Make sure that the result is actually a class application, then return it. If it's not,
-      -- return `none`.
-      if (← isClass? result).isSome then return some result else return none
+  let (margs, binderInfos, _) ← forallMetaTelescope sig
+  unless margs.size == slots.size do return none
+  for i in [0:margs.size] do
+    if let some v := slots[i]! then
+      unless ← isDefEq margs[i]! v do return none
+  for i in [0:margs.size] do
+    if binderInfos[i]!.isInstImplicit && !(← margs[i]!.mvarId!.isAssigned) then
+      let some inst ← (try some <$> synthInstance (← instantiateMVars (← inferType margs[i]!))
+        catch _ => pure none) | return none
+      margs[i]!.mvarId!.assign inst
+  let result ← instantiateMVars (mkAppN head margs)
+  if result.hasExprMVar then return none
+  if (← isClass? result).isSome then return some result else return none
 
 
 /--
-#TODO
+Elaborate a pattern entry `e`.
+
+Pattern entries can be applications, in which case `subst` won't tell us what the
+pattern entry is, but rather what its key arguments are.
 -/
-public partial def elabEntry (e : Expr) : MetaM (Option Expr) := do
+public partial def elabPatternEntry (e : Expr) : MetaM (Option Expr) := do
   let args := e.getAppArgs
   let some h := e.getAppFn.constName? | return some e
   if args.isEmpty then return some e
   let keep ← keySlots h
   if keep.isEmpty then return some e
-  let mut opt : Array (Option Expr) := #[]
-  let mut i : Nat := 0
-  for b in keep do
-    if b then
-      let some a := args[i]? | return none
-      let some a' ← elabEntry a | return none
-      opt := opt.push (some a')
-      i := i + 1
-    else
-      opt := opt.push none
-  unless i == args.size do return none
-  try some <$> mkAppOptM h opt catch _ => return none
-
+  let mut vals : Array Expr := #[]
+  for arg in args do
+    let some arg' ← elabPatternEntry arg | return none
+    vals := vals.push arg'
+  let some slots := placeAtSlots keep vals | return none
+  try some <$> mkAppOptM h slots catch _ => return none
 
 /--
+The inverse of `toKey` for non-family class binders. Reifies the class `name` by instantiating the
+`pattern` of its key with the concrete values provided by `subst`, each elaborated #TODO, and then
+inferring the non-key-slots of `name`. Returns `none` if `pattern` needs more values than `subst`
+provides, or if elaboration or inference failed at any point.
+-/
+public def reify (name : Name) (pattern subst : Array Expr) : MetaM (Option Expr) := do
+  if pattern.any (·.looseBVarRange > subst.size) then return none
+  let mut entries : Array Expr := #[]
+  for p in pattern do
+    let some e ← elabPatternEntry (p.instantiate subst) | return none
+    entries := entries.push e
+  reifyClass name entries (useKeySlots := true)
 
-TODO
+/--
+Run the continuation `k` on the "generic" application `name.{…} a₁ … aₙ` of `n`-ary class `name` on
+fresh local hypotheses `a₁`, …, `aₙ`.
 
 For motivation, see `isSubsingletonClass`.
-
-
-To construct `ClassGraph.isSubsingleton`, `ClassGraph.ofEnv` needs to be able to ask whether, for a
-given `n`-ary class head `head`, the "generic" application `head a₁ … aₙ` is a `Subsingleton`, which
-amounts to asking whether `Subsingleton (head a₁ … aₙ)` is type correct.
 -/
-public partial def withGenericKey {α} (name : Name) (k : Expr → MetaM (Option α)) : MetaM (Option α) := do
+public def withGenericKey {α} (name : Name) (k : Expr → MetaM (Option α)) : MetaM (Option α) := do
+  -- `head` is `name` with universe levels, i.e., `name.{…}`.
   let some (head, sig) ← freshHeadAndSig? name | return none
-  withGenericKeyGo head sig #[] k
-where
-  /-- ... -/
-  withGenericKeyGo {α : Type _} (head type : Expr) (applied : Array Expr)
-      (k : Expr → MetaM (Option α)) : MetaM (Option α) := do
-    match type with
-    | .forallE binderName binderType body binderInfo =>
-      if binderInfo.isInstImplicit then
-        match ← (try some <$> synthInstance (← instantiateMVars binderType) catch _ => pure none) with
-        | some inst => withGenericKeyGo head (body.instantiate1 inst) (applied.push inst) k
-        | none =>
-          withLocalDeclD binderName (← instantiateMVars binderType) fun x => do
-            withNewLocalInstance ((← isClass? (← inferType x)).getD .anonymous) x do
-              withGenericKeyGo head (body.instantiate1 x) (applied.push x) k
-      else
-        withLocalDeclD binderName binderType fun x =>
-          withGenericKeyGo head (body.instantiate1 x) (applied.push x) k
-    | _ =>
-      let app := mkAppN head applied
-      if (← isClass? app).isSome then k app else return none
+  forallTelescopeReducing sig fun params _ => do
+    let app := mkAppN head params
+    if (← isClass? app).isSome then k app else return none

@@ -64,9 +64,9 @@ public def classBinderBracket : BinderInfo → String → String
 def describeTarget (c : Candidate) : String :=
   match c.shape with
   | .drop => "removed (dropped)"
-  | .weaken t => s!"weakened to `{t.toVertex.name}`"
+  | .weaken t => s!"weakened to `{t.name}`"
   | .split ts => "split into " ++
-      ", ".intercalate (ts.toList.map (fun t => s!"`{t.toVertex.name}`"))
+      ", ".intercalate (ts.toList.map (fun t => s!"`{t.name}`"))
 
 /-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
 def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
@@ -146,7 +146,7 @@ def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
         (universeGeneralization? const declSig bodyStx b wrappers)).isSome then
       let cur := if b.level == 1 then "Type" else s!"Type {b.level - 1}"
       logLint linter.generalizeUniverses (← getRef)
-        -- TODO: Is this the right message format? I'm confused.
+        -- #TODO: Is this the right message format? I'm confused.
         m!"the `({b.name} : {cur})` binder of `{declName}` can be universe-polymorphic"
     else
       failed := failed.push b

@@ -15,27 +15,58 @@ namespace GeneralizationLinter
 # Re-synthesize weakened binders
 -/
 
-/-- Wrapper around `reifyClass` that adds support for family class binders. -/
-def replaceBinderType (oldType : Expr) (replacement : Key) : MetaM (Option Expr) := do
+/-- The information that `reSynthExpr` and `reSynthArg` need. -/
+structure ReSynthContext where
+  /--
+  Map from old binders to new binders. Note that all binders are included here, even non-targeted
+  binders.
+  -/
+  remap : HashMap FVarId Expr
+  /--
+  Set containing the fvar of the targeted binder, and the fvars of any binders coming after the
+  targeted binder.
+  -/
+  stale : HashSet FVarId
+  /-- Set containing the fvar of the targeted binder. Note that `staleW ⊆ stale`. -/
+  staleW : HashSet FVarId
+
+/-- Context established by `withWeakenedDecl` and handed to its continuation. -/
+structure WeakenedDeclContext extends ReSynthContext where
+  /-- The original telescope. -/
+  args : Array Expr
+  /-- Binders that were introduced _before_ the target. -/
+  pre : Array Expr
+  /-- The binders replacing the target binder. -/
+  newBinders : Array Expr
+  /-- Rebuilt versions of the binders that were introduced _after_ the target. -/
+  rebuiltPost : Array Expr
+  /-- The original conclusion. -/
+  concl : Expr
+
+def WeakenedDeclContext.weakenedTelescope (ctx : WeakenedDeclContext) : Array Expr :=
+  ctx.pre ++ ctx.newBinders ++ ctx.rebuiltPost
+
+/--
+Wrapper around `reifyClass` that adds support for family class binders.
+
+---
+**Implementation notes**
+
+#TODO
+
+-/
+def replaceBinderType (oldType : Expr) (replacement : Vertex) : MetaM (Option Expr) := do
   -- If `oldType` reduces to a family binder `∀ prefixes, body` (where `body` is a class
   -- application), then deconstruct (i.e., telescope) `oldType`, reify the replacement class in
   -- `body`, and reconstruct (`mkForallFVars`) the family binder with the new body `body'`.
-  let replVertex := replacement.toVertex
-  let replName := replVertex.name
   if (← whnfR oldType).isForall then
     forallTelescopeReducing oldType fun prefixes body => do
-      let some body' ← reifyClass replName (← frameArgs body) | return none
+      let some body' ← reifyClass replacement.name (← frameArgs body) | return none
       some <$> mkForallFVars prefixes body'
   -- If `oldType` doesn't reduce to a family binder, then it's a class application.
   else do
     let oldKey ← toKey oldType
-    let replPattern := replVertex.pattern
-    if replPattern.any (·.looseBVarRange > oldKey.subst.size) then return none
-    let mut entries : Array Expr := #[]
-    for p in replPattern do
-      let some e ← elabEntry (p.instantiate oldKey.subst) | return none
-      entries := entries.push e
-    reifyClass replName entries (useKeySlots := true)
+    reify replacement.name replacement.pattern oldKey.subst
 
 /-- Does `e` have any fvar that is contained in `stale`? -/
 def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
@@ -43,22 +74,22 @@ def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
 
 mutual
 /--
-TODO
+#TODO
 
 Arguments:
 * `remap : HashMap FVarId Expr`: Map from old binders to new binders. Note that all binders are
   included here, even non-targeted binders.
 * `stale`:
 -/
-private partial def reSynthExpr (remap : HashMap FVarId Expr) (stale staleW : HashSet FVarId) (e : Expr) :
+private partial def ReSynthContext.reSynthExpr (ctx : ReSynthContext) (e : Expr) :
     MetaM Expr := do
   match e with
   -- fvars are remapped according to `remap`, or left as-is if they're not in `remap`.
-  | .fvar fvarId => return remap.getD fvarId e
+  | .fvar fvarId => return ctx.remap.getD fvarId e
 
   -- Application (`fn a₁ … aₙ`) ⟹ Rebuild head and arguments.
   | .app .. => e.withApp fun fn args => do
-      return mkAppN (← reSynthExpr remap stale staleW fn) (← args.mapM (reSynthArg remap stale staleW))
+      return mkAppN (← ctx.reSynthExpr fn) (← args.mapM ctx.reSynthArg)
 
   -- Anonymous function (``fun `name : type => body``) ⟹
   -- 1. Rebuild `type` into `type'`
@@ -66,26 +97,25 @@ private partial def reSynthExpr (remap : HashMap FVarId Expr) (stale staleW : Ha
   --    `type'` with user-facing name `` `name ``. Note that `x` inherits the original binder info
   --    (e.g., `.default`, `.implicit`, etc.), and that, if `x` is class-typed (i.e., if `type'` is
   --    a class application), then `x` is registered as an instance in our transient local context,
-  --    which is relevant for any synthesis that may occur while rebuilding `body` in step
-  --    3.
+  --    which is relevant for any synthesis that may occur while rebuilding `body` in step 3.
   -- 3. Instantiate `bvar 0` in `body` to the fvar `x` from step 2, and rebuild the result to get
   --    `body'`.
   -- 4. Construct an anonymous function using `x` and `body'`, revert the local context, and return
   --    the constructed anonymous function.
   | .lam binderName binderType body binderInfo =>
-    let binderType' ← if mentions stale binderType then
-      reSynthExpr remap stale staleW binderType else pure binderType
+    let binderType' ← if mentions ctx.stale binderType then
+      ctx.reSynthExpr binderType else pure binderType
     withLocalDecl binderName binderInfo binderType' fun x => do
-      mkLambdaFVars #[x] (← reSynthExpr remap stale staleW (body.instantiate1 x))
+      mkLambdaFVars #[x] (← ctx.reSynthExpr (body.instantiate1 x))
 
   -- Forall-expression / dependent arrow (``forall `name : type, body``) ⟹ Basically the same
   -- treatment as anonymous functions, except that the constructed expression is a forall-expression
   -- instead of an anonymous function.
   | .forallE binderName binderType body binderInfo =>
-    let binderType' ← if mentions stale binderType then
-      reSynthExpr remap stale staleW binderType else pure binderType
+    let binderType' ← if mentions ctx.stale binderType then
+      ctx.reSynthExpr binderType else pure binderType
     withLocalDecl binderName binderInfo binderType' fun x => do
-      mkForallFVars #[x] (← reSynthExpr remap stale staleW (body.instantiate1 x))
+      mkForallFVars #[x] (← ctx.reSynthExpr (body.instantiate1 x))
 
   -- Let-expression (``let `name : type := value; body``) ⟹ Basically the same treatment as
   -- anonymous functions, except that the constructed expression is a let-expression instead of an
@@ -94,18 +124,18 @@ private partial def reSynthExpr (remap : HashMap FVarId Expr) (stale staleW : Ha
   -- in the `.lam` and `.forallE` branches, which adds a `LocalDecl.cdecl` to the context, which is
   -- opaque and doesn't have a value.
   | .letE declName type value body _ =>
-    let type' ← if mentions stale type then reSynthExpr remap stale staleW type else pure type
-    withLetDecl declName type' (← reSynthArg remap stale staleW value) fun x => do
-        mkLetFVars #[x] (← reSynthExpr remap stale staleW (body.instantiate1 x))
+    let type' ← if mentions ctx.stale type then ctx.reSynthExpr type else pure type
+    withLetDecl declName type' (← ctx.reSynthArg value) fun x => do
+        mkLetFVars #[x] (← ctx.reSynthExpr (body.instantiate1 x))
 
   -- If the expression is just a subexpression wrapped with metadata, recurse into the subexpression.
-  | .mdata data expr => return .mdata data (← reSynthExpr remap stale staleW expr)
+  | .mdata data expr => return .mdata data (← ctx.reSynthExpr expr)
 
   -- Projection-expression (e.g. `struct.2`, where `struct : Int × Int`) ⟹ Recurse into `struct`.
   -- Note that field accesses reduce to projection-expressions.
   | .proj typeName idx struct =>
-    if ¬ mentions stale struct then return e
-    let struct' ← reSynthArg remap stale staleW struct
+    if ¬ mentions ctx.stale struct then return e
+    let struct' ← ctx.reSynthArg struct
     let raw : Expr := .proj typeName idx struct'
     let structType ← whnf (← inferType struct')
     if structType.getAppFn.isConstOf typeName then
@@ -120,36 +150,36 @@ private partial def reSynthExpr (remap : HashMap FVarId Expr) (stale staleW : Ha
   | .const .. | .sort .. | .lit .. | .bvar .. | .mvar .. => return e
 
 /-- Rebuild an application argument. -/
-private partial def reSynthArg (remap : HashMap FVarId Expr) (stale staleW : HashSet FVarId) (arg : Expr) :
+private partial def ReSynthContext.reSynthArg (ctx : ReSynthContext) (arg : Expr) :
     MetaM Expr := do
   -- If `arg` doesn't mention _any_ stale fvars, we just return it as is; nothing to update.
-  unless mentions stale arg do return arg
+  unless mentions ctx.stale arg do return arg
   -- If `arg` doesn't mention any weakened binders, we just need to remap the fvars (which
   -- `reSynthExpr` will do for us), but don't have to (and in fact shouldn't) try to re-synthesize
   -- `arg` or anything within it.
-  unless mentions staleW arg do return ← reSynthExpr remap stale staleW arg
-  -- `arg` mentions a weakened binder. TODO: Understand this in-depth.
+  unless mentions ctx.staleW arg do return ← ctx.reSynthExpr arg
+  -- `arg` mentions a weakened binder. #TODO: Understand this in-depth.
   let fallback : MetaM Expr := do
     if let .const declName us := arg.getAppFn then
       if declName.isInternal then
         if let some info := (← getEnv).find? declName then
           if let some v := info.value? (allowOpaque := true) then
-            return ← reSynthArg remap stale staleW
+            return ← ctx.reSynthArg
               ((v.instantiateLevelParams info.levelParams us).beta arg.getAppArgs)
-    reSynthExpr remap stale staleW arg
+    ctx.reSynthExpr arg
   -- Infer type of `arg`, defaulting to `Sort 0` if we can't (should be unreachable though).
   let type ← (try instantiateMVars (← inferType arg) catch _ => pure (.sort .zero))
-  -- TODO: Understand the below (it's changed).
+  -- #TODO: Understand the below (it's changed).
   if (← isClass? type).isSome then
     let trySynth (goal : Expr) : MetaM Expr := do
       match ← (try trySynthInstance goal catch _ => pure .none) with
       | .some inst =>
         let inst ← instantiateMVars inst
-        if inst.hasExprMVar || mentions stale inst then fallback else return inst
+        if inst.hasExprMVar || mentions ctx.stale inst then fallback else return inst
       | _ => fallback
-    if mentions stale type then
-      let type' ← reSynthExpr remap stale staleW type
-      if ¬ mentions stale type' then trySynth type' else fallback
+    if mentions ctx.stale type then
+      let type' ← ctx.reSynthExpr type
+      if ¬ mentions ctx.stale type' then trySynth type' else fallback
     else
       trySynth type
   else
@@ -164,31 +194,28 @@ binders `b₁, …, bᵢ₋₁` added to the context.
 
 Afterwards, run continuation `k`.
 
-The arguments `stale` and `staleW` are passed as-is to `reSynthExpr` during the rebuilding, and
-never modified. The argument `remap` is extended with the mappings `b₁ ↦ b₁', …, bₙ ↦ bₙ'`, where
-`bᵢ'` is the rebuilt version of `bᵢ`.
+`ctx.stale` and `ctx.staleW` are never modified, while `ctx.remap` is extended with the mappings `b₁
+↦ b₁', …, bₙ ↦ bₙ'`, where `bᵢ'` is the rebuilt version of `bᵢ`.
 -/
-private partial def reSynthTelescope {α : Type} (remap : HashMap FVarId Expr)
-    (stale staleW : HashSet FVarId) (rest : List Expr)
-    (k : HashMap FVarId Expr → Array Expr → MetaM α) : MetaM α := do
-  go remap rest #[]
+private partial def ReSynthContext.reSynthTelescope {α : Type} (ctx : ReSynthContext)
+    (rest : List Expr) (k : ReSynthContext → Array Expr → MetaM α) : MetaM α := do
+  go ctx rest #[]
 where
   /--
-  * `remap` contains `b₁ ↦ b₁', …, bₖ ↦ bₖ'`, where `bᵢ'` is the rebuilt version of `bᵢ`.
-    It also contains whatever `reSynthTelescope`'s caller passed it with.
+  * `ctx.remap` contains `b₁ ↦ b₁', …, bₖ ↦ bₖ'`, where `bᵢ'` is the rebuilt version of `bᵢ`. It
+    also contains whatever `reSynthTelescope`'s caller passed in.
   * `rest` contains the remaining binders to be rebuilt, `[bₖ₊₁, …, bₙ]`.
   * `newBinders` contains new binders built thus far, `#[b₁', …, bₖ']`.
   -/
-  go (remap : HashMap FVarId Expr) (rest : List Expr) (newBinders : Array Expr) : MetaM α := do
+  go (ctx : ReSynthContext) (rest : List Expr) (newBinders : Array Expr) : MetaM α := do
     match rest with
-    | [] => k remap newBinders
+    | [] => k ctx newBinders
     | x :: rest => do
       let ld ← x.fvarId!.getDecl
       let type ← instantiateMVars ld.type
-      let type' ← if mentions stale type then reSynthExpr remap stale staleW type else pure type
+      let type' ← if mentions ctx.stale type then ctx.reSynthExpr type else pure type
       withLocalDecl ld.userName ld.binderInfo type' fun xNew => do
-        let remap' := remap.insert x.fvarId! xNew
-        go remap' rest (newBinders.push xNew)
+        go { ctx with remap := ctx.remap.insert x.fvarId! xNew } rest (newBinders.push xNew)
 
 
 /--
@@ -214,8 +241,11 @@ def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α
   withReader (fun ctx => { ctx with
     localInstances := ctx.localInstances.filter (·.fvar.fvarId! != drop) }) act
 
-/-- TODO -/
-public def replacementsRedundant (type : Expr) (binderIdx : Nat) (repls : Array Key) :
+/--
+Returns `true` iff every `repl[i]`'s class is already synthesizable from the other binders (the ones
+not being replaced).
+-/
+public def replacementsRedundant (type : Expr) (binderIdx : Nat) (repls : Array Vertex) :
     MetaM Bool := do
   try
     forallTelescope type fun args _ => do
@@ -236,13 +266,13 @@ multiple binders.
 
 Parameters:
 * `tb`: `FVarId` of targeted binder that is to be replaced.
-* `replacements`: The `Name`s of the class heads to replace `tb`'s type with.
+* `replacements`: The `Vertex`es with which to replace `tb`'s type.
 * `k`: Continuation, which receives
   * If `replacements` is empty or `replacements.size ≥ 2`, then an empty map. If `replacements.size
     == 1`, then a map from `tb` to `replacements[0]`.
   * The array of new replacement binder `Expr`s that were built.
 -/
-def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Key)
+def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Vertex)
     (k : HashMap FVarId Expr → Array Expr → MetaM (Option α)) : MetaM (Option α) := do
   let oldDecl ← tb.getDecl
   let userName := oldDecl.userName
@@ -250,174 +280,94 @@ def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Key)
     if h : i < replacements.size then
       let some newBinderType ← replaceBinderType (← tb.getType) replacements[i] | return none
       withLocalDecl userName oldDecl.binderInfo newBinderType fun newBinder => do
-        withNewLocalInstance ((← isClass? newBinderType).getD replacements[i].toVertex.name) newBinder
+        withNewLocalInstance ((← isClass? newBinderType).getD replacements[i].name) newBinder
           (go (i + 1) (if replacements.size == 1 then remap.insert tb newBinder else remap)
             (newBinders.push newBinder))
     else k remap newBinders
   go 0 {} #[]
 
+/-- Helper to initialize the stale sets. -/
 def staleSets (oldFV : FVarId) (post : Array Expr) : HashSet FVarId × HashSet FVarId :=
   let staleW := {oldFV}
   (staleW, post.foldl (init := staleW) (·.insert ·.fvarId!))
 
--- /--
--- TODO (Cascade.lean)
---
--- Note: Currently unused, used for cascade in different branch.
--- -/
--- public def rebuildWeakenedProof (value : Expr) (n : Nat) (replacements : Array Name) :
---     MetaM (Option (Expr × Expr)) := do
---   if replacements.size > 1 then return none -- splits are not this function's responsibility
---   forallTelescope (← inferType value) fun args _ => do
---     let body ← Core.betaReduce (mkAppN value args)
---     let some (targetedIdx, oldBinder) ← getNthTargetedBinder args n | return none
---     let oldFV := oldBinder.fvarId!
---     let pre := args[0:targetedIdx].toArray
---     let post := (args[targetedIdx+1:args.size]).toArray
---     let (staleW, stale) := staleSets oldFV post
---     let close : Array Expr → Expr → MetaM (Option (Expr × Expr)) := fun binders body' => do
---       try
---         let value' ← instantiateMVars (← mkLambdaFVars binders body')
---         if value'.hasExprMVar || value'.hasSorry then return none
---         if mentions stale value' then return none
---         Meta.check value'
---         return some ((← instantiateMVars (← inferType value')), value')
---       catch _ => return none
---     withReplacementBinders oldFV replacements fun remap newBinders =>
---       withoutLocalInstance oldFV do
---         reSynthTelescope remap stale staleW post.toList fun remap rebuiltPost => do
---           let body' ← reSynthArg remap stale staleW body
---           close (pre ++ newBinders ++ rebuiltPost) body'
-
-
 /--
 TODO
 -/
-public def verifyWeakening (ciType val : Expr) (k : Nat) (repls : Array Key) : MetaM Bool := do
-  forallTelescope ciType fun args concl => do
-    let body ← Core.betaReduce (mkAppN val args)
-    let some (ti, oldBinder) ← getNthTargetedBinder args k | return false
+def withWeakenedDecl {α : Type} (type : Expr) (n : Nat) (repls : Array Vertex)
+    (k : WeakenedDeclContext →
+    MetaM (Option α)) : MetaM (Option α) := do
+  forallTelescope type fun args concl => do
+    let some (ti, oldBinder) ← getNthTargetedBinder args n | return none
     let oldFV := oldBinder.fvarId!
+    let pre := args[0:ti].toArray
     let post := (args[ti+1:args.size]).toArray
     let (staleW, stale) := staleSets oldFV post
-    let finish (sub0 : HashMap FVarId Expr) (newBinders : Array Expr) : MetaM Bool :=
+    withReplacementBinders oldFV repls fun remap₀ newBinders =>
       withoutLocalInstance oldFV do
-        reSynthTelescope sub0 stale staleW post.toList fun remap rebuiltPost => do
-          let body' ← reSynthArg remap stale staleW body
-          let concl' ← reSynthExpr remap stale staleW concl
-          if mentions stale body' || mentions stale concl' then return false
-          try
-            if body'.hasExprMVar || body'.hasSorry then return false
-            let concl' ← instantiateMVars concl'
-            Meta.check concl'
-            if concl'.hasExprMVar || concl'.hasSorry then return false
-            let W ← instantiateMVars
-              (← mkForallFVars (args[0:ti].toArray ++ newBinders ++ rebuiltPost) concl')
-            if W.hasLooseBVars || mentions stale W then
-              return false
-            Meta.check W
-            Meta.check body'
-            let bty ← instantiateMVars (← inferType body')
-            isDefEq bty concl'
-          catch _ => return false
-    return (← withReplacementBinders oldFV repls fun remap newBinders =>
-      some <$> finish remap newBinders).getD false
-
--- /--
--- Given a name `name` and its associated constant info `const`, returns the head of the class-typed
--- conclusion of `const` if `const` could be a vacuity witness, and `none` otherwise.
-
--- ---
--- **Implementation notes**
-
--- If `name` refers to a constant `const` for which we have that
-
--- 1.  `const` is a definition (not a theorem, axiom, etc.),
--- 2.  `const` is not internal (i.e., `name` does not start with `_`),
--- 3.  `const`'s binders are all instance-implicit or `Sort`-typed,
--- 4.  `const` has at least one class premise, and
--- 5.  `const` concludes in a class application,
-
--- then we view `const` as a potential "vacuity witness", i.e., a definition that may show that a
--- weakening candidate is vacuous. An example of such a `const`:
-
--- ```
--- abbrev Module.addCommMonoidToAddCommGroup (R : Type*) {M : Type*}
---     [Ring R] [AddCommMonoid M] [Module R M] : AddCommGroup M where --
--- ```
-
--- The 5 conditions enumerated above are only a heuristic. They may miss definitions that could be
--- vacuity witnesses, and certainly may include ones that couldn't be. As such, we cannot guarantee
--- that no vacuous suggestions will ever be emitted, but are merely trying to minimize their frequency
--- to the point that at most a handful of vacuous weakenings are suggested across all of Mathlib, so
--- that the linter can be turned off locally for these.
--- -/
--- def vacuityWitnessHead? (env : Environment) (name : Name) (const : ConstantInfo) : Option Name :=
---   if !(const matches .defnInfo _) || name.isInternal then none else go const.type false
--- where
---   go : Expr → Bool → Option Name
---     -- Work through binders one by one.
---     | .forallE _ binderType body binderInfo, hasPremise =>
---       -- We assume all instance-implicit arguments are class-typed.
---       if binderInfo == .instImplicit then go body true
---       else if binderType.isSort then go body hasPremise
---       -- ≥1 of the binders is neither instance-implicit nor `Sort`-typed ⟹ `const` is not a vacuity
---       -- witness according to our heuristic (condition 3).
---       else none
---     -- Base case: If we've made it to here, we just need to check that `const`'s conclusion is
---     -- indeed class-typed, and then we can return its head.
---     | e, hasPremise => do
---       guard hasPremise
---       let .const c _ := e.getAppFn | none
---       guard (isClass env c)
---       some c
-
--- /--
--- Scanning the environment for vacuity witnesses isn't super expensive, but it's not cheap either, so
--- we cache the scan of imported constants specifically for each process; if the imported constants
--- change, this generally requires a file rebuild, which would lead to a new process and hence kindly
--- invalidate this cache for us.
--- -/
--- private initialize witnessScanRef : IO.Ref (Option (NameMap (Array Name))) ← IO.mkRef none
-
--- /--
--- Return all the potential vacuity witnesses (according to `vacuityWitnessHead?`) that are defined in
--- the environment for the class `className`, but which are not registered instances (since those are
--- taken into account by #TODO already).
--- -/
--- def vacuityWitnessesFor (className : Name) : MetaM (Array Name) := do
---   let env ← getEnv
---   let instances := (instanceExtension.getState env).instanceNames
---   -- `nameMap` is the map from class names to the arrays of potential vacuity witnesses (according
---   -- to `vacuityWitnessHead?`), which we're accumulating toward. `n` is a name of a constant that
---   -- we're checking out to see whether we should add it to `nameMap`, and `const` is `n`'s constant
---   -- info.
---   let add (nameMap : NameMap (Array Name)) (n : Name) (const : ConstantInfo) : NameMap (Array Name) :=
---     match vacuityWitnessHead? env n const with
---     | some vacWitnessHead =>
---       if instances.contains n then
---         nameMap -- Registered instance already
---       else
---         nameMap.insert vacWitnessHead ((nameMap.getD vacWitnessHead #[]).push n)
---     | none => nameMap
---   -- This is the "vacuity witness name map" for imported constants, taken from the `witnessScanRef`
---   -- cache or, if called for the first time, built from scratch.
---   let imported ← (← witnessScanRef.get).getDM do
---     let nameMap := env.constants.map₁.fold add {}
---     witnessScanRef.set (some nameMap)
---     pure nameMap
---   -- This is the "vacuity witness name map" for local constants, built from scratch on every call.
---   -- This build is very fast, since the number of local constants is generally rather small, and
---   -- almost always far smaller than the number of important constants.
---   let locals := env.constants.map₂.foldl add {}
---   -- Return potential vacuity witnesses from across both imported and local constants.
---   return (imported.getD className #[]) ++ (locals.getD className #[])
+        let rsCtx₀ : ReSynthContext := { remap := remap₀, stale, staleW }
+        rsCtx₀.reSynthTelescope post.toList fun rsCtx rebuiltPost =>
+          k { toReSynthContext := rsCtx, args, pre, newBinders, rebuiltPost, concl }
 
 
 /--
-TODO
+Verify that, if we replace the `n`th targeted binder in `ciType` with binders for `repls`, the value
+(usually a proof term) `val` can be re-synthesized in the weakened context. If so, returns `true`;
+otherwise, returns `false`.
+
+---
+**Implementation notes**
+
+`verifyWeakening …` does not imply `(recompiledAgainst? …).isSome`, nor the other way around:
+
+| `verifyW…` | `recompiledA…` | % of cands | `WeakeningGrade` |
+|:---     |:---     |:--- |:--- |
+| `true`  | `true`  | ≈?% | `WeakeningGrade.proofIntact` |
+| `true`  | `false` | ≈?% | `WeakeningGrade.needsModification` |
+| `false` | `true`  | ≈0% | `WeakeningGrade.proofIntact` |
+| `false` | `false` | ≈?% | N/A; weakening is not valid |
+
+For example, the weakening candidate `[Group G] ↝ [MulOneClass M]` demonstrates each possible case
+through the four theorems below (note that, for theorem `ff`, the candidate wouldn't have been
+generated in the first place):
+
+```
+variable {G : Type} [inst : Group G] (a : G)
+theorem tt : a * 1 = a := mul_one a
+theorem tf : a * 1 = a := @mul_one G inst.toDivInvMonoid.toMonoid.toMulOneClass a
+theorem ft : a * 1 = a := by first | exact tt | exact mul_one a
+
+class A (α : Type) where
+class B (α : Type) where n : Nat
+instance A.toB {α : Type} [A α] : B α := ⟨42⟩
+theorem ff {α : Type} [A α] : B.n α = 42 := rfl
+```
 -/
-public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Array Key)) : MetaM (Option Expr) := do
+public def verifyWeakening (ciType val : Expr) (n : Nat) (repls : Array Vertex) : MetaM Bool := do
+  let holds? ← withWeakenedDecl ciType n repls fun ctx => do
+    let body ← Core.betaReduce (mkAppN val ctx.args)
+    let body' ← ctx.reSynthArg body
+    let concl' ← ctx.reSynthExpr ctx.concl
+    if mentions ctx.stale body' || mentions ctx.stale concl' then return false
+    try
+      if body'.hasExprMVar || body'.hasSorry then return false
+      let concl' ← instantiateMVars concl'
+      Meta.check concl'
+      if concl'.hasExprMVar || concl'.hasSorry then return false
+      let W ← instantiateMVars (← mkForallFVars ctx.weakenedTelescope concl')
+      if W.hasLooseBVars || mentions ctx.stale W then return false
+      Meta.check W
+      Meta.check body'
+      let bodyT' ← instantiateMVars (← inferType body')
+      some <$> isDefEq bodyT' concl'
+    catch _ => return false
+  return holds?.getD false
+
+/--
+Given a statement with constant info `const`, returns the type of said statement after weakening,
+for each `(n, repls)` in `ws`, the `n`th targeted binder of the statement with binders for `repls`.
+-/
+public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Array Vertex)) : MetaM (Option Expr) := do
   let sorted := ws.qsort (fun a b => a.1 > b.1)
   let mut type := const.type
   for (k, repls) in sorted do
@@ -425,21 +375,11 @@ public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Arra
     type := t
   return some type
 where
-  rebuiltStatementType (type : Expr) (n : Nat) (repls : Array Key) : MetaM (Option Expr) := do
-    forallTelescope type fun args concl => do
-      let some (ti, _) ← getNthTargetedBinder args n | return none
-      let oldFVar := args[ti]!.fvarId!            -- `FVarId` of targeted binder
-      let pre := args[0:ti].toArray               -- binders before (i.e., to the left of) the target
-      let post := (args[ti+1:args.size]).toArray  -- binders after (i.e., to the right of) the target
-      let (staleW, stale) := staleSets oldFVar post
-      -- TODO
-      let close (remap₀ : HashMap FVarId Expr) (newBinders : Array Expr) : MetaM (Option Expr) :=
-        reSynthTelescope remap₀ stale staleW post.toList fun remap rebuiltPost => do
-          let concl' ← reSynthExpr remap stale staleW concl
-          if mentions stale concl' then return none
-          let type ← instantiateMVars (← mkForallFVars (pre ++ newBinders ++ rebuiltPost) concl')
-          if type.hasLooseBVars || type.hasExprMVar || mentions stale type then return none
-          unless ← isTypeCorrect type do return none
-          return some type
-      withReplacementBinders oldFVar repls fun remap newBinders =>
-        withoutLocalInstance oldFVar (close remap newBinders)
+  rebuiltStatementType (type : Expr) (n : Nat) (repls : Array Vertex) : MetaM (Option Expr) := do
+    withWeakenedDecl type n repls fun ctx => do
+      let concl' ← ctx.reSynthExpr ctx.concl
+      if mentions ctx.stale concl' then return none
+      let type ← instantiateMVars (← mkForallFVars ctx.weakenedTelescope concl')
+      if type.hasLooseBVars || type.hasExprMVar || mentions ctx.stale type then return none
+      unless ← isTypeCorrect type do return none
+      return some type

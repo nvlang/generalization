@@ -21,6 +21,11 @@ is used to verify a weakening candidate before it is ever suggested. The goal is
 single false positive, i.e., an erroneous suggestion.
 -/
 
+/--
+Some weakenings may be genuine weakenings, but require modifications in the value's (i.e., proof
+term's) source code. We "grade" these weakenings as `needsModification`. We grade weakenings that
+don't require any such modification as `proofIntact`.
+-/
 public inductive WeakeningGrade where
   | proofIntact
   | needsModification
@@ -36,7 +41,7 @@ public inductive WrapperClassification where
   /--
   "Declaration wrappers" that we can ignore, because they don't affect our linter's verdict. These
   are `include … in` commands, and `omit … in` commands that don't contain any `Term.hole` or
-  `Term.syntheticHole` within them. TODO: More details on why.
+  `Term.syntheticHole` within them. #TODO: More details on why.
   -/
   | ignorable
   /--
@@ -81,7 +86,7 @@ omit [Monoid M] in
 
 then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all›],
 ‹@[instance] lemma something : … := …›)`. (Note that the `omit [Monoid M] in` wrapper is not
-among those returned; this is because TODO)
+among those returned; this is because #TODO)
 
 If the declaration includes any other wrappers (`omit … in …` with holes, `attribute … in …`,
 `include … in …`, etc.), return `none`. This is because `peelWrappers?`'s output is passed on to
@@ -254,7 +259,9 @@ public def rewrapTerm (wrappers : Array Syntax) (stx : Syntax) : Syntax :=
     let kind := match w.getKind with
       | ``Parser.Command.open => ``Parser.Term.open
       | ``Parser.Command.set_option => ``Parser.Term.set_option
-      | _ => ``Parser.Term.set_option -- TODO: Should be unreachable, so make it fail loudly
+      -- Should be unreachable.
+      | k => panic! s!"rewrapTerm: unexpected wrapper kind '{k}'\
+          (peelWrappers? should only collect open/set_option)"
     mkNode kind (w.getArgs ++ #[mkAtom "in", body])
 
 /--
@@ -297,33 +304,40 @@ public def declValNodes (stx : Syntax) : Array Syntax :=
   collectNodes ``Parser.Command.declValSimple stx
     ++ collectNodes ``Parser.Command.whereStructInst stx
 
--- public def declIdMatches (declCmd : Syntax) (declName : Name) : Bool :=
---   match declCmd.find? (·.isOfKind ``Parser.Command.declId) with
---   | some declId => (declId.getArg 0).getId.eraseMacroScopes.isSuffixOf declName
---   | none => false
-
-/-- TODO -/
+/--
+Given a weakened declaration `W` of the form `‹binders› : concl` (where `concl` is the same as the
+original declaration's), re-elaborate the declaration's value's source code (`bodyStx`, usually
+corresponding to a proof term) into `val` and type-check that we have `val : concl`. Return `some
+val` if successful, or `none` otherwise.
+-/
 public def recompiledAgainst? (W : Expr) (bodyStx : Syntax) : TermElabM (Option Expr) :=
   suppressingDiagnostics do
   try
     Meta.forallTelescope W fun ys concl => do
+      -- Re-elaborate value source code into `val`. Note that `elabTermAndSynthesize` benefits from
+      -- receiving the expected type (in this case `concl`, passed as `some concl`), since without
+      -- it most (all?) instance synthesis goals would remain unknown metavariables.
       let val ← elabTermAndSynthesize bodyStx (some concl)
+      -- Check that `val : concl`.
       unless ← Meta.isDefEq (← Meta.inferType val) concl do return none
+      -- #TODO: Fully understand.
       let val ← instantiateMVars (← Meta.mkLambdaFVars ys val)
       if val.hasSorry || val.hasExprMVar then return none
       discard <| Meta.check val
       return some val
   catch _ => return none
 
-/-- TODO -/
+/--
+#TODO
+-/
 public def recompiledVal? (const : ConstantInfo) (bodyStx : Syntax)
-    (ws : Array (Nat × Array Key)) : TermElabM (Option (Expr × Expr)) := do
+    (ws : Array (Nat × Array Vertex)) : TermElabM (Option (Expr × Expr)) := do
   let some W ← weakenedStatementType const ws | return none
   return (← recompiledAgainst? W bodyStx).map (W, ·)
 
-/-- TODO -/
+/-- Wrapper around `recompiledVal?`; returns `true` iff #TODO -/
 public def recompileHolds (const : ConstantInfo) (bodyStx : Syntax)
-    (ws : Array (Nat × Array Key)) : TermElabM Bool :=
+    (ws : Array (Nat × Array Vertex)) : TermElabM Bool :=
   return (← recompiledVal? const bodyStx ws).isSome
 
 public structure GradedWeakening where
@@ -331,13 +345,17 @@ public structure GradedWeakening where
   grade : WeakeningGrade
   deriving Inhabited
 
-/-- TODO -/
+/--
+Given a declaration with constant into `const` and value source code `bodyStx` (as well as a linter
+config and class graph), return an array of verified, graded weakenings that could be applied to the
+declaration.
+-/
 public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (bodyStx : Syntax) : TermElabM (Array GradedWeakening) := do
   (← meetCandidates cfg graph const).filterMapM fun candidate => do
     if !cfg.verify then
       return some { candidate, grade := .unverified }
-    if ← recompileHolds const bodyStx #[(candidate.binder.idx, candidate.replacementKeys)] then
+    if ← recompileHolds const bodyStx #[(candidate.binder.idx, candidate.replacements)] then
       return some { candidate, grade := .proofIntact}
     else if ← weakeningHolds const candidate then
       return some { candidate, grade := .needsModification }

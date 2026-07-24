@@ -11,7 +11,7 @@ import Batteries.Data.List.Basic
 namespace GeneralizationLinter
 
 /-!
-TODO: Module docstring.
+# Vertex
 -/
 
 open Lean
