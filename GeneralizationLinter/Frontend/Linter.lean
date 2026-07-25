@@ -46,30 +46,36 @@ def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
     | _ => return false
   go type
 
-def describeCandidate (const : ConstantInfo) (c : Candidate) : MetaM (String × String) :=
+/--
+Given a weakening candidate `c` for a declaration with constant info `const`, returns a pair of
+strings, the first string indicating what the existing binder looks like (e.g., `Group G`)
+-/
+def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
   targetedBinderTelescope const.type fun lds _ => do
-    let old? := lds[c.binder.idx]?
-    let disp ← match old? with
+    let old? := lds[candidate.binder.idx]?
+    -- Targeted binder (unbracketed)
+    let dispUnbracketed ← match old? with
       | some ld => pure (toString (← Meta.ppExpr ld.type))
-      | none => pure (if c.binder.origName.isAnonymous then s!"⟨binder {c.binder.idx}⟩"
-          else toString c.binder.origName)
+      -- ↓ Should be unreachable.
+      | none => pure (
+          if candidate.binder.origName.isAnonymous then s!"⟨binder {candidate.binder.idx}⟩"
+          else toString candidate.binder.origName)
+    -- Targeted binder (bracketed)
+    let disp := match candidate.binder.binderInfo with
+      | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
+      | .implicit => "{" ++ dispUnbracketed ++ "}"
+      | _ => s!"[{dispUnbracketed}]"
+    -- Render a
     let render (t : Vertex) : MetaM String := do
       let some ld := old? | return toString t.name
       let some e ← replaceBinderType ld.type t | return toString t.name
       return toString (← Meta.ppExpr e)
-    let target ← match c.shape with
+    let target ← match candidate.shape with
       | .drop => pure "removed (dropped)"
-      | .weaken t => pure s!"weakened to `{← render t}`"
-      | .split ts => pure ("split into " ++
-          ", ".intercalate (← ts.toList.mapM fun t => return s!"`{← render t}`"))
+      | .weaken weakerVertex => pure s!"weakened to `{← render weakerVertex}`"
+      | .split weakerVertices => pure ("split into " ++
+          ", ".intercalate (← weakerVertices.toList.mapM fun t => return s!"`{← render t}`"))
     return (disp, target)
-
-
-/-- Helper to pretty-print a targeted binder. -/
-public def classBinderBracket : BinderInfo → String → String
-  | .strictImplicit, s => s!"⦃{s}⦄"
-  | .implicit, s => "{" ++ s ++ "}"
-  | _, s => s!"[{s}]"
 
 
 /-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
@@ -119,8 +125,7 @@ def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : Consta
       command to be removed, to be valid." else ""
   for gw in ← gradedWeakenings cfg graph const src do
     let c := gw.candidate
-    let (dispRaw, target) ← describeCandidate const c
-    let disp := classBinderBracket c.binder.binderInfo dispRaw
+    let (disp, target) ← describeCandidate const c
     let msg := match gw.grade with
       | .holds { binders, body, concl } =>
         let must := (if !concl then ["its conclusion"] else []) ++
@@ -277,15 +282,18 @@ public def linter : Linter where
     let hb := Core.getMaxHeartbeats effectiveOpts
     let cfg := linterConfigOfOptions effectiveOpts
     let declVals := declValNodes declCmd
-    for t in ← getInfoTrees do
-      let thms := t.getTheorems (← getEnv)
+    for infoTree in ← getInfoTrees do
+      -- Theorem to lint.
+      let thms := infoTree.getTheorems (← getEnv)
       unless thms.isEmpty do liftTermElabM <| withEffectiveContext effectiveOpts hb do
+        -- Get body `Syntax` _without_ wrappers.
         let some rawBody ← (
+            -- Because `linter.run` is called once for each top-level command, if `thms.length ≥ 2`,
+            -- this means that we're dealing with (#TODO: with what?), so we bail.
             if declVals.size == 1 && thms.length == 1 then
               bodyTermOfDeclVal? declVals[0]! (wrapped := !wrappers.isEmpty)
-            else
-              pure none
-          ) | return
+            else pure none) | return
+        --
         let bodyStx := rewrapTerm wrappers rawBody
         -- #TODO
         let declSig? := declCmd.find? (·.isOfKind ``Parser.Command.declSig)
@@ -297,6 +305,7 @@ public def linter : Linter where
           concl? := conclStx,
           binders := (declSig?.map (·[0].getArgs)).getD #[] ++ sectionBinders
         }
+        -- Build class graph (or fetch it from cache).
         let graph? ← if tcOn && !tcSuppressed then
             tryCatchRuntimeEx (some <$> cachedClassGraph) (fun _ => pure none)
           else pure none

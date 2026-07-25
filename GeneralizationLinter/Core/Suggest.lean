@@ -17,10 +17,10 @@ open Std (HashSet HashMap)
 public inductive WeakeningShape where
   /-- Binder is entirely unused, and can therefore be dropped (removed). -/
   | drop
-  /-- Binder can be weakened to `target`. -/
-  | weaken (target : Vertex)
-  /-- Binder can be weakened by splitting it up into `targets`. -/
-  | split (targets : Array Vertex)
+  /-- Binder can be weakened to `weakerVertex`. -/
+  | weaken (weakerVertex : Vertex)
+  /-- Binder can be weakened by splitting it up into `weakerVertices`. -/
+  | split (weakerVertices : Array Vertex)
   deriving Inhabited
 
 /-- An unverified weakening proposal. See also `ConfirmedWeakening`. -/

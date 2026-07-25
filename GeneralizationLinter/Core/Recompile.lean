@@ -276,6 +276,7 @@ public def bodyTermOfDeclVal? (dval : Syntax) (wrapped : Bool) : TermElabM (Opti
   if dval.getKind == ``Parser.Command.declValSimple then
     return some dval[1]
   else if dval.getKind == ``Parser.Command.whereStructInst then
+    -- We don't support wrapped structs, because (#TODO: why?).
     if wrapped then return none
     -- Reprint struct, then parse the result.
     match Parser.runParserCategory (← getEnv) `term
@@ -396,21 +397,35 @@ val` if successful, or `none` otherwise.
 -/
 public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List Name := []) : TermElabM (Option Expr) :=
   suppressingDiagnostics do
-  try
-    -- #TODO
-    withLevelNames ((← getLevelNames) ++ levelNames) do
-    Meta.forallTelescope W fun ys concl => do
-      -- Re-elaborate value source code into `val`. Note that `elabTermAndSynthesize` benefits from
-      -- receiving the expected type (in this case `concl`, passed as `some concl`), since without
-      -- it most (all?) instance synthesis goals would remain unknown metavariables.
-      let val ← elabTermAndSynthesize src.body (some concl)
-      -- Check that `val : concl`.
-      unless ← Meta.isDefEq (← Meta.inferType val) concl do return none
-      -- #TODO: Fully understand.
-      let val ← instantiateMVars (← Meta.mkLambdaFVars ys val)
-      if val.hasSorry || val.hasExprMVar then return none
-      discard <| Meta.check val
-      return some val
+  try withLevelNames ((← getLevelNames) ++ levelNames) do
+    let attempt (depth? : Option Nat) : TermElabM (Option Expr) := try
+        Meta.forallBoundedTelescope W depth? fun ys concl => do
+          -- Re-elaborate value source code into `val`. Note that `elabTermAndSynthesize` benefits from
+          -- receiving the expected type (in this case `concl`, passed as `some concl`), since without
+          -- it most (all?) instance synthesis goals would remain unknown metavariables.
+          let val ← elabTermAndSynthesize src.body (some concl)
+          -- Check that `val : concl`.
+          unless ← Meta.isDefEq (← Meta.inferType val) concl do return none
+          -- `val` still mentions `ys` as loose fvars, so we re-abstract them to turn `val` into a
+          -- closed term of type `W`.
+          let val ← instantiateMVars (← Meta.mkLambdaFVars ys val)
+          if val.hasSorry || val.hasExprMVar then return none
+          discard <| Meta.check val
+          return some val
+      catch _ => return none
+    if let some val ← attempt none then return some val
+    let some conclStx := src.concl? | return none
+    let depth? ← try
+        Meta.forallTelescope W fun ys _ => do
+          let c ← withoutErrToSorry (elabTermAndSynthesize conclStx none)
+          let rec foralls : Expr → Nat
+            | .forallE _ _ b _ => foralls b + 1
+            | _ => 0
+          let k := min (foralls c) ys.size
+          return if k == 0 then none else some (ys.size - k)
+      catch _ => pure none
+    let some depth := depth? | return none
+    attempt (some depth)
   catch _ => return none
 
 public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Name := []) :
@@ -419,12 +434,16 @@ public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Na
   try
     withLevelNames ((← getLevelNames) ++ levelNames) do
       Meta.forallTelescope W fun ys concl => do
-        let c ← withoutErrToSorry (elabTermAndSynthesize conclStx none)
+        let newConcl ← withoutErrToSorry (elabTermAndSynthesize conclStx none)
+        -- `forallTelescope W` strips every `∀` from `W`, even ones that may actually belong to the
+        -- conclusion of `W`, which we don't want. So we consult `conclStx` and check how many
+        -- leading `∀`s it has, and re-abstract precisely that number of the telescoped `W`'s
+        -- trailing binders. #TODO
         let rec foralls : Expr → Nat
           | .forallE _ _ b _ => foralls b + 1
           | _ => 0
-        let k := min (foralls c) ys.size
-        Meta.isDefEq c (← Meta.mkForallFVars (ys.extract (ys.size - k) ys.size) concl)
+        let k := min (foralls newConcl) ys.size
+        Meta.isDefEq newConcl (← Meta.mkForallFVars (ys.extract (ys.size - k) ys.size) concl)
     catch e =>
       -- We don't want a timeout here to lead to a claim that "the conclusion would have to be
       -- modified" (we don't know whether that's true or not at this point), but rather just to
@@ -460,7 +479,7 @@ public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool
     let searched := if args.size ≥ 3 then args.extract 2 args.size else args
     searched.any fun arg => (arg.find? fun s =>
       (s.isIdent && !name.hasMacroScopes && !name.isAnonymous &&
-        s.getId.eraseMacroScopes == name) ||
+        s.getId.eraseMacroScopes.getRoot == name) ||
       (s.isIdent && s.getId == ``inferInstance) ||
       (match s with | .atom _ v => v == "‹" | _ => false)
     ).isSome
@@ -504,10 +523,15 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
   for candidate in candidates do
     let ws := accepted.push (candidate.binder.idx, candidate.replacements)
     let g? ← withHeartbeatBudget cfg.perCandidateHeartbeats none do
+      -- For experimental ablation measurements only.
       if !cfg.verify then return some { candidate, grade := .unverified }
+      -- `W` is `const` with each weakening in `ws` (i.e., possibly more than one weakening)
+      -- applied.
       let some W ← weakenedStatementType const ws | return none
+      -- Compute weakening grade.
       let bodyG := (← recompiledAgainst? W src const.levelParams).isSome
       if !bodyG then
+        if !accepted.isEmpty then return none
         unless ← weakeningHolds const candidate do return none
       let conclG ← match src.concl? with
         | some concl' => conclSourceHolds W concl' const.levelParams

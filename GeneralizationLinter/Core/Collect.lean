@@ -623,7 +623,10 @@ private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
   match e with
   | .app .. =>
-    e.withApp fun fn args => do
+    -- See `unfoldInternalHead?`.
+    if let some e' ← unfoldInternalHead? binderIdOf e then
+      walk binderIdOf e'
+    else e.withApp fun fn args => do
       for arg in args do route binderIdOf arg
       walk binderIdOf fn -- the application head itself may also contain chains, so `walk` it
   | .proj _ _ struct => route binderIdOf struct -- collect on `struct` directly

@@ -33,11 +33,12 @@ There's a few additional `generalizeTypeclasses.*` options available, and a univ
 
 ### Implementation
 
-I used `doc-gen4` to generate a documentation website automatically from the docstrings in the
-source code. This website is available at %TODO.
+I used `doc-gen4` to generate a [documentation
+website](https://nvlang.github.io/generalization/docs/) automatically from the docstrings in the
+source code.
 
 
 ## Tool and computational resource disclosure
 
 I used generative artificial intelligence (AI) for this project, primarily Anthropic's Claude
-Fable 5, Opus 4.8, Opus 4.7, and Opus 4.6 models.
+Fable 5, Opus 5, Opus 4.8, Opus 4.7, and Opus 4.6 models.
