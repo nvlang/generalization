@@ -46,13 +46,24 @@ def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
     | _ => return false
   go type
 
-/-- Helper to pretty-print a candidate. -/
-def binderDisplay (const : ConstantInfo) (c : Candidate) : MetaM String :=
+def describeCandidate (const : ConstantInfo) (c : Candidate) : MetaM (String × String) :=
   targetedBinderTelescope const.type fun lds _ => do
-    match lds[c.binder.idx]? with
-    | some ld => return toString (← Meta.ppExpr (← whnf ld.type))
-    -- Should be unreachable.
-    | none => return if c.binder.origName.isAnonymous then s!"⟨binder {c.binder.idx}⟩" else toString c.binder.origName
+    let old? := lds[c.binder.idx]?
+    let disp ← match old? with
+      | some ld => pure (toString (← Meta.ppExpr ld.type))
+      | none => pure (if c.binder.origName.isAnonymous then s!"⟨binder {c.binder.idx}⟩"
+          else toString c.binder.origName)
+    let render (t : Vertex) : MetaM String := do
+      let some ld := old? | return toString t.name
+      let some e ← replaceBinderType ld.type t | return toString t.name
+      return toString (← Meta.ppExpr e)
+    let target ← match c.shape with
+      | .drop => pure "removed (dropped)"
+      | .weaken t => pure s!"weakened to `{← render t}`"
+      | .split ts => pure ("split into " ++
+          ", ".intercalate (← ts.toList.mapM fun t => return s!"`{← render t}`"))
+    return (disp, target)
+
 
 /-- Helper to pretty-print a targeted binder. -/
 public def classBinderBracket : BinderInfo → String → String
@@ -60,13 +71,6 @@ public def classBinderBracket : BinderInfo → String → String
   | .implicit, s => "{" ++ s ++ "}"
   | _, s => s!"[{s}]"
 
-/-- Helper to print suggestion according to candidate's `WeakeningShape`. -/
-def describeTarget (c : Candidate) : String :=
-  match c.shape with
-  | .drop => "removed (dropped)"
-  | .weaken t => s!"weakened to `{t.name}`"
-  | .split ts => "split into " ++
-      ", ".intercalate (ts.toList.map (fun t => s!"`{t.name}`"))
 
 /-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
 def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
@@ -75,19 +79,7 @@ def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit
     withTheReader Core.Context (fun c => { c with maxHeartbeats := heartbeats }) <|
       tryCatchRuntimeEx x (fun _ => pure ())
 
-/--
-If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just
-run `x` with the existing `maxHeartbeats`.
--/
-def withDeclBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
-    TermElabM α := do
-  if budget == 0 then return ← x
-  let ambient := (← readThe Core.Context).maxHeartbeats
-  let effectiveMax := if ambient == 0 then budget else min budget ambient
-  tryCatchRuntimeEx
-    (withTheReader Core.Context (fun c => { c with maxHeartbeats := effectiveMax })
-      (withCurrHeartbeats x))
-    (fun _ => pure dflt)
+
 
 /-- Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied. -/
 def wrapperEffectiveOptions? (wrappers : Array Syntax) :
@@ -119,18 +111,30 @@ Run the typeclass linter on the declaration named `declName` whose `ConstantInfo
 whose value is described by syntax tree `bodyStx`.
 -/
 def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
-    (bodyStx : Syntax) (declName : Name) : TermElabM Unit := do
-  for gw in ← withDeclBudget cfg.perDeclHeartbeats #[] (gradedWeakenings cfg graph const bodyStx) do
+    (src : DeclSource) (declName : Name)
+    (omitCaveat : Bool := false) : TermElabM Unit := do
+  let caveat := if omitCaveat then
+    " This declaration's scope has one or more variables omitted from it, which means that the \
+      suggested weakening may require the declaration or its value to be modified, or the omit \
+      command to be removed, to be valid." else ""
+  for gw in ← gradedWeakenings cfg graph const src do
     let c := gw.candidate
-    let disp := classBinderBracket c.binder.binderInfo (← binderDisplay const c)
+    let (dispRaw, target) ← describeCandidate const c
+    let disp := classBinderBracket c.binder.binderInfo dispRaw
     let msg := match gw.grade with
-      | .proofIntact =>
-        m!"the `{disp}` hypothesis of `{declName}` can be {describeTarget c}."
-      | .needsModification =>
-        m!"the `{disp}` hypothesis of `{declName}` can be {describeTarget c}, but the proof would have to be modified."
+      | .holds { binders, body, concl } =>
+        let must := (if !concl then ["its conclusion"] else []) ++
+          (if !body then ["its proof"] else [])
+        let mustPart := if must.isEmpty then "" else
+          s!", but {" and ".intercalate must} would have to be modified"
+        let mightPart := if binders then "" else
+          if must.isEmpty then ", but its binders might have to be modified"
+          else ", and its binders might have to be as well"
+        m!"the `{disp}` hypothesis of `{declName}` can be \
+          {target}{mustPart}{mightPart}.{caveat}"
       -- For experiments only.
       | .unverified =>
-        m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {describeTarget c}."
+        m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {target}."
     logLint linter.generalizeTypeclasses (← getRef) msg
 
 /--
@@ -141,8 +145,8 @@ def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
     (declCmd bodyStx : Syntax) (wrappers : Array Syntax) (declName : Name) : TermElabM Unit := do
   let some declSig := declCmd.find? (·.isOfKind ``Parser.Command.declSig) | return
   let mut failed : Array PinnedBinder := #[]
-  for b in ← withDeclBudget cfg.perDeclHeartbeats #[] (pinnedTypeBinders const.type) do
-    if (← withDeclBudget cfg.perDeclHeartbeats none
+  for b in ← withHeartbeatBudget cfg.perCandidateHeartbeats #[] (pinnedTypeBinders const.type) do
+    if (← withHeartbeatBudget cfg.perCandidateHeartbeats none
         (universeGeneralization? const declSig bodyStx b wrappers)).isSome then
       let cur := if b.level == 1 then "Type" else s!"Type {b.level - 1}"
       logLint linter.generalizeUniverses (← getRef)
@@ -153,7 +157,7 @@ def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
   for lvl in (failed.map (·.level)).toList.eraseDups do
     let grp := failed.filter (·.level == lvl)
     if let some (sub, _) ← sharedSubsetLadder? grp (fun sub =>
-        withDeclBudget cfg.perDeclHeartbeats none
+        withHeartbeatBudget cfg.perCandidateHeartbeats none
           (universeGeneralizationsBlocks? const declSig bodyStx #[sub] wrappers)) then
       let names := ", ".intercalate (sub.toList.map fun b => s!"`{b.name}`")
       logLint linter.generalizeUniverses (← getRef)
@@ -264,6 +268,12 @@ public def linter : Linter where
     let tcOn := getLinterValue linter.generalizeTypeclasses lintOpts
     let uvOn := getLinterValue linter.generalizeUniverses lintOpts
     unless tcOn || uvOn do return
+    let sectionBinders := (← getScope).varDecls.map (·.raw)
+    let omitTouched := hasOmitWrapper stx || !(← getScope).omittedVars.isEmpty
+    let acceptOmits := generalizeTypeclasses.acceptOmits.get effectiveOpts
+    let declVals := declValNodes declCmd
+    let tcSuppressed := (omitTouched && !acceptOmits) ||
+      (declVals.size == 1 && hasUnreadDeclVal declVals[0]!)
     let hb := Core.getMaxHeartbeats effectiveOpts
     let cfg := linterConfigOfOptions effectiveOpts
     let declVals := declValNodes declCmd
@@ -277,12 +287,27 @@ public def linter : Linter where
               pure none
           ) | return
         let bodyStx := rewrapTerm wrappers rawBody
-        let graph? ← if tcOn then some <$> cachedClassGraph else pure none
+        -- #TODO
+        let declSig? := declCmd.find? (·.isOfKind ``Parser.Command.declSig)
+        let conclStx := declSig?.bind fun declSig' =>
+          if declSig'[1].isOfKind ``Parser.Term.typeSpec then some (rewrapTerm wrappers declSig'[1][1])
+          else none
+        let src : DeclSource := {
+          body := bodyStx,
+          concl? := conclStx,
+          binders := (declSig?.map (·[0].getArgs)).getD #[] ++ sectionBinders
+        }
+        let graph? ← if tcOn && !tcSuppressed then
+            tryCatchRuntimeEx (some <$> cachedClassGraph) (fun _ => pure none)
+          else pure none
         for thm in thms do
           let const ← getConstInfo thm.name
+          -- Skip `where`/`let rec` helpers that `getTheorems` may report.
+          unless declIdMatches declCmd thm.name do continue
           if let some graph := graph? then
-            if ← hasTargetedClassBinder const.type then
-              lintTypeclassesFor cfg graph const bodyStx thm.name
+            withHeartbeatBudget cfg.perCandidateHeartbeats () do
+              if ← hasTargetedClassBinder const.type then
+                lintTypeclassesFor cfg graph const src thm.name (omitCaveat := omitTouched)
           if uvOn then
             lintUniversesFor cfg const declCmd bodyStx wrappers thm.name
 

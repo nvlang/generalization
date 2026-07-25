@@ -541,6 +541,22 @@ def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) : MetaM (Option Key
   if openArity head ≤ openArity srcKey then return some head
   return if hasDispatchSlot (← getEnv) head.name then none else some head
 
+/--
+If `e` is an application of a dynamically generated constant (e.g., `_proof_*`, `T.match_1`, etc.)
+and which has some targeted binder's fvar as one of its direct arguments, we unfold `e` and return
+its body β-reduced against `e`'s arguments. This allows us to avoid having `e`'s signature introduce
+needlessly strong requirements, which dynamically generated constants tend to do.
+-/
+private def unfoldInternalHead? (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
+    MetaM (Option Expr) := do
+  let .const declName levels := e.getAppFn | return none
+  unless declName.isInternalDetail do return none
+  let args := e.getAppArgs
+  unless args.any (fun arg => arg.isFVar && binderIdOf.contains arg.fvarId!) do return none
+  let some info := (← getEnv).find? declName | return none
+  let some val := info.value? (allowOpaque := true) | return none
+  return some ((val.instantiateLevelParams info.levelParams levels).beta args)
+
 mutual
 
 /--
@@ -558,12 +574,14 @@ private partial def route (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
 If `e` corresponds to a maximal instance chain, `collect` will record that instance chain as an
 `MIChain`. If `e` does not correspond to a maximal instance chain, then `collect` will recursively
 find any maximal instance chains that it may contain.
-
-#TODO
 -/
 private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     (chainHead? : Option Key) : CollectM Unit := do
   let e := e.consumeMData -- strip .mdata
+  -- See `unfoldInternalHead?`.
+  if let some e' ← unfoldInternalHead? binderIdOf e then
+    collect binderIdOf e' chainHead?
+    return
   -- Pi-instance (e.g. `Pi.instMul`)
   if let .lam binderName binderType body binderInfo := e then
     withLocalDecl binderName binderInfo binderType fun x =>
@@ -600,9 +618,7 @@ private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     -- confluence: start new chain for each arg
     for arg in args do route binderIdOf arg
 
-/--
-#TODO
--/
+/-- Find any spot in `e` where the elaborator put an instance transformation or root instance. -/
 private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
   match e with
@@ -625,9 +641,7 @@ private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
 
 end
 
-/--
-#TODO
--/
+/-- Collect all `MIChain`s from `decl` and `proof`. -/
 public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
     MetaM (Array MIChain) := do
   forallTelescope decl fun xs concl => do
@@ -647,12 +661,13 @@ public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
     return chains
 
 /--
-#TODO
+Convert an array of `MIChain`s into an array of `Requirement`s, filtering out `MIChain`s that aren't
+rooted at one of the targeted binders.
 -/
 public def getReqs (binders : Array TargetedBinder) (chains : Array MIChain) :
     MetaM (Array Requirement) := do
   let binderOfId : HashMap BinderId TargetedBinder :=
-    binders.foldl (init := {}) fun m b => m.insert b.fvar b
+    binders.foldl (init := {}) fun binderOfId' b => binderOfId'.insert b.fvar b
   return chains.filterMap fun c =>
     match binderOfId[c.inst]? with
     | some b => some { toKey := c.head, binder := b }

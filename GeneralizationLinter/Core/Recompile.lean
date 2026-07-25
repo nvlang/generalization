@@ -21,14 +21,26 @@ is used to verify a weakening candidate before it is ever suggested. The goal is
 single false positive, i.e., an erroneous suggestion.
 -/
 
+public structure SourceIntact where
+  /-- Whether the declaration's binders _might_ have to be modified after applying the weakening. -/
+  binders : Bool
+  /-- Whether the declaration's conclusion has to be modified after applying the weakening. -/
+  concl : Bool
+  /--
+  Whether the declaration's body (i.e., value) has to be modified after applying the weakening.
+  -/
+  body : Bool
+deriving Inhabited, BEq
+
+public def SourceIntact.all (si : SourceIntact) : Bool := si.binders && si.concl && si.body
+
 /--
 Some weakenings may be genuine weakenings, but require modifications in the value's (i.e., proof
 term's) source code. We "grade" these weakenings as `needsModification`. We grade weakenings that
-don't require any such modification as `proofIntact`.
+don't require any such modification as `.statementAndValueIntact`.
 -/
 public inductive WeakeningGrade where
-  | proofIntact
-  | needsModification
+  | holds (parts : SourceIntact)
   | unverified -- For experimental ablation measurements.
 deriving Inhabited, BEq
 
@@ -39,9 +51,63 @@ public inductive WrapperClassification where
   -/
   | replayable
   /--
-  "Declaration wrappers" that we can ignore, because they don't affect our linter's verdict. These
-  are `include … in` commands, and `omit … in` commands that don't contain any `Term.hole` or
-  `Term.syntheticHole` within them. #TODO: More details on why.
+  "Declaration wrappers" that we can ignore, because they don't affect our linter's verdict (in the
+  case of `omit`, this assumes diamond coherence; see implementation notes below). These are
+  `include … in` commands, and `omit … in` commands that don't contain any `Term.hole` or
+  `Term.syntheticHole` within them.
+
+  ---
+  **Implementation notes**
+
+  `omit`s with holes are tricky for us. Consider the following example:
+
+  ```
+  variable {α β : Type} [Group α] [Inv β]
+
+  omit [Inv _] in -- or section-wide `omit [Inv _]`
+  theorem foo (a : α) : a⁻¹ = a⁻¹ := rfl
+  ```
+
+  If we treated `omit`s with holes like any other `omit`s and just ignored them, the linter would
+  suggest the weakening `[Group α] ↝ [Inv α]` for `foo`. If the user then went ahead and applied
+  that weakening without removing the `omit`, they'd get an error. For our purposes, this means that
+  the weakening would be a false positive.
+
+  Given that Mathlib, as of v4.32.1, doesn't have a single `omit` declaration with a hole, skipping
+  declarations that do doesn't cost us any recall, while removing this "attack vector".
+
+  We still need to show why "hole-less" `omit … in …` and `omit …` (section-wide) are fine, however.
+
+  The argument relies on the assumption of diamond coherence. To see why it needs the assumption,
+  consider the following example:
+
+  ```
+  variable {α : Type} [inst₁ : Group α] [inst₂ : Inv α]
+
+  omit [Inv α] in -- or `omit [Inv α]`
+  theorem foo (a : α) :
+    @Inv.inv α (@DivInvMonoid.toInv α (@Group.toDivInvMonoid α inst₁)) a =
+    @Inv.inv α (@DivInvMonoid.toInv α (@Group.toDivInvMonoid α inst₁)) a := rfl
+  ```
+
+  A few observations here:
+  * The explicit `@…` transformations are important here: `theorem foo (a : α) : a⁻¹ = a⁻¹ := rfl`
+    would emit the error `` cannot omit referenced section variable `inst₂` ``. That's because,
+    without the `omit`, `foo` would just use `inst₂` instead of `inst₁`, as it prefers not having to
+    call a bunch of projections.
+  * Diamond coherence is violated here, as both `inst₁` and `inst₂` share the data-carrying
+    descendant `Inv α`.
+  * The linter would suggest weakening `[inst₁ : Group α]` to `[inst₁ : Inv α]`, with the caveat
+    that the weakening would require `foo`'s statement to be modified (it'd have to replace the two
+    `@Inv.inv α (@DivInvMonoid.toInv α (@Group.toDivInvMonoid α inst₁))` with `inst₁` after the
+    weakening).
+
+  A hole-free `omit [SomeClass a₁ … aₙ]` pins all its explicit arguments `a₁`, …, `aₙ`. For a
+  weakening suggestion to clash with `[SomeClass a₁ … aₙ]`, we would need to have that
+
+  2.  Fact: The linter will never introduce new names. Combined with the fact that the omitted names
+      cannot be in the given declaration's scope, this implies that the suggested weakening can't
+      intersect/clash with the omitted names.
   -/
   | ignorable
   /--
@@ -59,19 +125,16 @@ declarations that the linter may analize is `Parser.Command.declaration`.
 -/
 public def lemmaKind : SyntaxNodeKind := `lemma
 
-/--
-Classify "wrappers"
--/
+/-- Classify "wrappers". -/
 public def classifyWrapper (w: Syntax) : WrapperClassification :=
   match w.getKind with
   | ``Parser.Command.open | ``Parser.Command.set_option => .replayable
-  | ``Parser.Command.include => .ignorable
-  | ``Parser.Command.omit =>
-    if (w.find? fun s => s.getKind == ``Parser.Term.hole
-      || s.getKind == ``Parser.Term.syntheticHole).isSome
-    then .refused else .ignorable
+  | ``Parser.Command.include | ``Parser.Command.omit => .ignorable
   | _ => .refused
 
+public partial def hasOmitWrapper (stx : Syntax) : Bool :=
+  if stx.getKind != ``Parser.Command.in then false
+  else (stx.getArg 0).getKind == ``Parser.Command.omit || hasOmitWrapper (stx.getArg 2)
 
 /--
 Peel any `open … in`, `set_option … in`, and "hole-less" `omit … in …` "wrappers" off of the main
@@ -85,8 +148,9 @@ omit [Monoid M] in
 ```
 
 then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all›],
-‹@[instance] lemma something : … := …›)`. (Note that the `omit [Monoid M] in` wrapper is not
-among those returned; this is because #TODO)
+‹@[instance] lemma something : … := …›)`. (Note that the `omit [Monoid M] in` wrapper is not among
+those returned; this is because we can safely ignore it. See `WrapperClassification.ignorable` for
+more information.)
 
 If the declaration includes any other wrappers (`omit … in …` with holes, `attribute … in …`,
 `include … in …`, etc.), return `none`. This is because `peelWrappers?`'s output is passed on to
@@ -304,20 +368,42 @@ public def declValNodes (stx : Syntax) : Array Syntax :=
   collectNodes ``Parser.Command.declValSimple stx
     ++ collectNodes ``Parser.Command.whereStructInst stx
 
+public def hasUnreadDeclVal (dval : Syntax) : Bool :=
+  if dval.getKind == ``Parser.Command.declValSimple then
+    !(dval[2].getArgs.all (·.isNone)) || !dval[3].isNone
+  else if dval.getKind == ``Parser.Command.whereStructInst then
+    !dval[2].isNone
+  else false
+
+public def declIdMatches (declCmd : Syntax) (declName : Name) : Bool :=
+  match declCmd.find? (·.isOfKind ``Parser.Command.declId) with
+  | some declId => (declId.getArg 0).getId.eraseMacroScopes.isSuffixOf declName
+  | none => true
+
+
+/-- Source code (`Syntax`) of a declaration and its value. -/
+public structure DeclSource where
+  body : Syntax
+  concl? : Option Syntax := none
+  binders : Array Syntax := #[]
+deriving Inhabited
+
 /--
 Given a weakened declaration `W` of the form `‹binders› : concl` (where `concl` is the same as the
 original declaration's), re-elaborate the declaration's value's source code (`bodyStx`, usually
 corresponding to a proof term) into `val` and type-check that we have `val : concl`. Return `some
 val` if successful, or `none` otherwise.
 -/
-public def recompiledAgainst? (W : Expr) (bodyStx : Syntax) : TermElabM (Option Expr) :=
+public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List Name := []) : TermElabM (Option Expr) :=
   suppressingDiagnostics do
   try
+    -- #TODO
+    withLevelNames ((← getLevelNames) ++ levelNames) do
     Meta.forallTelescope W fun ys concl => do
       -- Re-elaborate value source code into `val`. Note that `elabTermAndSynthesize` benefits from
       -- receiving the expected type (in this case `concl`, passed as `some concl`), since without
       -- it most (all?) instance synthesis goals would remain unknown metavariables.
-      let val ← elabTermAndSynthesize bodyStx (some concl)
+      let val ← elabTermAndSynthesize src.body (some concl)
       -- Check that `val : concl`.
       unless ← Meta.isDefEq (← Meta.inferType val) concl do return none
       -- #TODO: Fully understand.
@@ -327,23 +413,77 @@ public def recompiledAgainst? (W : Expr) (bodyStx : Syntax) : TermElabM (Option 
       return some val
   catch _ => return none
 
+public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Name := []) :
+    TermElabM Bool :=
+  suppressingDiagnostics do
+  try
+    withLevelNames ((← getLevelNames) ++ levelNames) do
+      Meta.forallTelescope W fun ys concl => do
+        let c ← withoutErrToSorry (elabTermAndSynthesize conclStx none)
+        let rec foralls : Expr → Nat
+          | .forallE _ _ b _ => foralls b + 1
+          | _ => 0
+        let k := min (foralls c) ys.size
+        Meta.isDefEq c (← Meta.mkForallFVars (ys.extract (ys.size - k) ys.size) concl)
+    catch e =>
+      -- We don't want a timeout here to lead to a claim that "the conclusion would have to be
+      -- modified" (we don't know whether that's true or not at this point), but rather just to
+      -- dropping the candidate altogether.
+      if e.isRuntime then throw e else return false
+
 /--
 #TODO
 -/
-public def recompiledVal? (const : ConstantInfo) (bodyStx : Syntax)
-    (ws : Array (Nat × Array Vertex)) : TermElabM (Option (Expr × Expr)) := do
+public def recompiledVal? (const : ConstantInfo) (src : DeclSource) (ws : Array (Nat × Array Vertex)) :
+    TermElabM (Option (Expr × Expr)) := do
   let some W ← weakenedStatementType const ws | return none
-  return (← recompiledAgainst? W bodyStx).map (W, ·)
+  return (← recompiledAgainst? W src const.levelParams).map (W, ·)
 
 /-- Wrapper around `recompiledVal?`; returns `true` iff #TODO -/
-public def recompileHolds (const : ConstantInfo) (bodyStx : Syntax)
-    (ws : Array (Nat × Array Vertex)) : TermElabM Bool :=
-  return (← recompiledVal? const bodyStx ws).isSome
+public def recompileHolds (const : ConstantInfo) (src : DeclSource) (ws : Array (Nat × Array Vertex)) :
+    TermElabM Bool :=
+  return (← recompiledVal? const src ws).isSome
+
+/--
+Does any of the declaration's binders, _as source code_ (`Syntax`), mention the binder `name`?
+
+---
+**Examples**
+
+```
+binderSourceNamesBinder ‹[inst : Ring R] [AddCommMonoid M] [Module R M]› `inst = false
+```
+-/
+public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool :=
+  binders.any fun b =>
+    let args := b.getArgs
+    let searched := if args.size ≥ 3 then args.extract 2 args.size else args
+    searched.any fun arg => (arg.find? fun s =>
+      (s.isIdent && !name.hasMacroScopes && !name.isAnonymous &&
+        s.getId.eraseMacroScopes == name) ||
+      (s.isIdent && s.getId == ``inferInstance) ||
+      (match s with | .atom _ v => v == "‹" | _ => false)
+    ).isSome
+
+/--
+If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just
+run `x` with the existing `maxHeartbeats`.
+-/
+-- Note: `dflt` stands for "default".
+public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
+    TermElabM α := do
+  if budget == 0 then return ← x
+  let ambient := (← readThe Core.Context).maxHeartbeats
+  let effectiveMax := if ambient == 0 then budget else min budget ambient
+  tryCatchRuntimeEx
+    (withTheReader Core.Context (fun c => { c with maxHeartbeats := effectiveMax })
+      (withCurrHeartbeats x))
+    (fun _ => pure dflt)
 
 public structure GradedWeakening where
   candidate : Candidate
   grade : WeakeningGrade
-  deriving Inhabited
+deriving Inhabited
 
 /--
 Given a declaration with constant into `const` and value source code `bodyStx` (as well as a linter
@@ -351,13 +491,35 @@ config and class graph), return an array of verified, graded weakenings that cou
 declaration.
 -/
 public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
-    (bodyStx : Syntax) : TermElabM (Array GradedWeakening) := do
-  (← meetCandidates cfg graph const).filterMapM fun candidate => do
-    if !cfg.verify then
-      return some { candidate, grade := .unverified }
-    if ← recompileHolds const bodyStx #[(candidate.binder.idx, candidate.replacements)] then
-      return some { candidate, grade := .proofIntact}
-    else if ← weakeningHolds const candidate then
-      return some { candidate, grade := .needsModification }
-    else
-      return none
+    (src : DeclSource) : TermElabM (Array GradedWeakening) := do
+
+  let candidates ← withHeartbeatBudget cfg.perCandidateHeartbeats #[] (meetCandidates cfg graph const)
+  if candidates.isEmpty then return #[]
+  -- Get the binder names, i.e., for `[inst : Monoid M]`, this would be `` `inst ``. Note that
+  -- `TargetedBinder.origName` is the name of the _class_, i.e., for `[inst : Monoid M]`, it would
+  -- be `` `Monoid ``.
+  let binderNames ← targetedBinderTelescope const.type fun lds _ => pure (lds.map (·.userName))
+  let mut accepted : Array (Nat × Array Vertex) := #[]
+  let mut graded : Array GradedWeakening := #[]
+  for candidate in candidates do
+    let ws := accepted.push (candidate.binder.idx, candidate.replacements)
+    let g? ← withHeartbeatBudget cfg.perCandidateHeartbeats none do
+      if !cfg.verify then return some { candidate, grade := .unverified }
+      let some W ← weakenedStatementType const ws | return none
+      let bodyG := (← recompiledAgainst? W src const.levelParams).isSome
+      if !bodyG then
+        unless ← weakeningHolds const candidate do return none
+      let conclG ← match src.concl? with
+        | some concl' => conclSourceHolds W concl' const.levelParams
+        | none => pure false
+      let bindersG := match binderNames[candidate.binder.idx]? with
+        | some n => !src.binders.isEmpty && !binderSourceNamesBinder src.binders n
+        | none => false
+      return some {
+        candidate,
+        grade := .holds { binders := bindersG, concl := conclG, body := bodyG }
+      }
+    if let some g := g? then
+      accepted := ws
+      graded := graded.push g
+  return graded

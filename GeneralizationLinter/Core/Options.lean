@@ -59,7 +59,7 @@ public structure LinterConfig where
   emissions. Higher values increase both maximum latency and coverage; for example, a value of
   `20_000_000` should suffice for around 98% of emissions.
   -/
-  perDeclHeartbeats : Nat := 4_000_000
+  perCandidateHeartbeats : Nat := 4_000_000
   /--
   Controls whether typeclass weakenings that would involve splitting a single hypothesis into two
   weaker ones should be suggested.
@@ -76,11 +76,20 @@ public structure LinterConfig where
   -/
   splitPolicy : SplitPolicy := .forbid
 
+  /--
+  Whether declarations within `omit … in` commands or within sections with any `omit …` commands
+  should be analyzed by the linter. Default: `false`.
+
+  **Warning:** For these declarations, the linter cannot guarantee that its suggestions will
+  elaborate.
+  -/
+  acceptOmits : Bool := false
+
   -- Options for experimental ablation measurements.
   verify : Bool := true
   subsumption : Bool := true
   conclusionGuard : Bool := true
-  vacuityGuard : Bool := true
+  redundancyGuard : Bool := true
 
 deriving Inhabited
 
@@ -111,9 +120,16 @@ public register_option generalizeTypeclasses.targetImplicit : Bool := {
     suggested weakenings of implicit or strict implicit binders."
 }
 
-public register_option generalizeTypeclasses.perDeclHeartbeats : Nat := {
+public register_option generalizeTypeclasses.perCandidateHeartbeats : Nat := {
   defValue := 4_000_000,
-  descr := "per-declaration heartbeat budget for the typeclass linter's analysis."
+  descr := "per-candidate heartbeat budget for the typeclass linter's analysis."
+}
+
+public register_option generalizeTypeclasses.acceptOmits : Bool := {
+  defValue := false,
+  descr := "whether declarations within `omit … in` commands or within sections with any `omit …`
+    commands should be analyzed by the linter. Default: `false`. Warning: For these declarations,
+    the linter cannot guarantee that its suggestions will elaborate."
 }
 
 -- This option will (almost definitely) not be part of the final API. It is used for thesis
@@ -142,7 +158,7 @@ public register_option generalizeTypeclasses.conclusionGuard : Bool := {
 
 -- This option will (almost definitely) not be part of the final API. It is used for thesis
 -- experiments.
-public register_option generalizeTypeclasses.vacuityGuard : Bool := {
+public register_option generalizeTypeclasses.redundancyGuard : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether weakenings that are detected
     to be vacuous should be blocked. Not all vacuity is detected."
@@ -157,9 +173,9 @@ public register_option linter.generalizeUniverses : Bool := {
 public def linterConfigOfOptions (opts : Lean.Options) : LinterConfig :=
   {
     splitPolicy := (SplitPolicy.ofString? (generalizeTypeclasses.split.get opts)).getD .forbid,
-    perDeclHeartbeats := generalizeTypeclasses.perDeclHeartbeats.get opts,
+    perCandidateHeartbeats := generalizeTypeclasses.perCandidateHeartbeats.get opts,
     verify := generalizeTypeclasses.verify.get opts,
     subsumption := generalizeTypeclasses.subsumption.get opts,
     conclusionGuard := generalizeTypeclasses.conclusionGuard.get opts,
-    vacuityGuard := generalizeTypeclasses.vacuityGuard.get opts
+    redundancyGuard := generalizeTypeclasses.redundancyGuard.get opts
   }

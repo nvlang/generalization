@@ -107,7 +107,7 @@ public def universeGeneralizationsBlocks? (const : ConstantInfo) (declSig : Synt
         let T := const.type.instantiateLevelParams pt (← pt.mapM fun _ => mkFreshLevelMVar)
         isDefEq W0 T
       unless faithful do return none
-      let some pf ← recompiledAgainst? W bodyStx | return none
+      let some pf ← recompiledAgainst? W { body := bodyStx } | return none
       if (pf.find? (·.isConstOf const.name)).isSome then return none
       return some ⟨blocks, W, us⟩
   catch _ => return none

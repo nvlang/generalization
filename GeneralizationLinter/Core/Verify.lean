@@ -52,7 +52,13 @@ def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
     else return none
 
 /--
-#TODO: example
+Filter out candidates in `candidates` that propose replacing a binder with the conclusion of the
+targeted dclaration.
+
+---
+**Example**
+
+A lemma `lemma {G : Type*} [Group G] : Monoid G` should not have `Group G` weakened to `Monoid G`.
 -/
 def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate) :
     Array Candidate :=
@@ -65,8 +71,11 @@ def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate
   -- candidate.
   | some concl => candidates.filter fun c => c.replacements.all (· != concl.toVertex)
 
-/-- #TODO -/
-def demoteVacuousWeakenings (declInfo : ConstantInfo) (candidates : Array Candidate) :
+/--
+Convert weakenings for which `replacementsRedundant` flagged every replacement as redundant to
+drops.
+-/
+def reshapeRedundantToDrops (declInfo : ConstantInfo) (candidates : Array Candidate) :
     MetaM (Array Candidate) :=
   candidates.filterMapM fun c => do
     if c.replacements.isEmpty then return some c
@@ -75,14 +84,7 @@ def demoteVacuousWeakenings (declInfo : ConstantInfo) (candidates : Array Candid
     return if (← weakeningHolds declInfo d) then some d else none
 
 
-/--
-Returns unverified weakening suggestion candidates for a given declaration.
-
----
-**Implementation notes**
-
-#TODO
--/
+/-- Returns unverified weakening suggestion candidates for a given declaration. -/
 public def meetCandidates (config : LinterConfig) (G : ClassGraph) (declInfo : ConstantInfo) :
     MetaM (Array Candidate) := do
   let some val := declInfo.value? (allowOpaque := true) | return #[]
@@ -93,13 +95,11 @@ public def meetCandidates (config : LinterConfig) (G : ClassGraph) (declInfo : C
   let mut candidates := candidates G binders reqs config (includeSubsumers := config.subsumption)
   if config.conclusionGuard then
     candidates := refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
-  if config.vacuityGuard && config.verify then
-    candidates ← demoteVacuousWeakenings declInfo candidates
+  if config.redundancyGuard && config.verify then
+    candidates ← reshapeRedundantToDrops declInfo candidates
   return candidates
 
-/--
-Returns verified weakening suggestions for a given declaration.
--/
+/-- Returns verified weakening suggestions for a given declaration. -/
 public def getConfirmedWeakenings (config : LinterConfig) (G : ClassGraph) (declName : Name) :
     MetaM (Array ConfirmedWeakening) := do
   let decl ← getConstInfo declName
