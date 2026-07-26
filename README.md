@@ -51,7 +51,7 @@ There's a few additional options available:
 ### Implementation
 
 For implementation detail, you can consult the [documentation
-website](https://nvlang.github.io/generalization/docs/) that was generated automatically from the docstrings in the source code using `doc-gen4.
+website](https://nvlang.github.io/generalization/docs/) that was generated automatically from the docstrings in the source code using `doc-gen4`.
 
 
 ## Tool and computational resource disclosure
