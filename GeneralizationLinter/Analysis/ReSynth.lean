@@ -7,6 +7,9 @@ module
 
 public import Lean.Meta.Basic
 import Lean.Meta.SynthInstance
+import Lean.Structure
+
+import Mathlib.Lean.Expr.Basic
 
 public import GeneralizationLinter.Graph.Vertex
 import GeneralizationLinter.Analysis.Collect
@@ -137,7 +140,7 @@ partial def ReSynthContext.reSynthExpr (ctx : ReSynthContext) (e : Expr) :
     else
       let some info := getStructureInfo? (← getEnv) typeName | return raw
       let some fieldName := info.fieldNames[idx]? | return raw
-      try mkProjection struct' fieldName catch _ => return raw
+      try Expr.mkProjection struct' fieldName catch _ => return raw
 
   -- The remaining expressions can't contain any fvars to remap or instances to resynthesize, so we
   -- return them as they are.

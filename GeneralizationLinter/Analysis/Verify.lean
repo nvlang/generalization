@@ -5,8 +5,12 @@ Authors: Noah Lang
 -/
 module
 
-import GeneralizationLinter.Analysis.ReSynth
+public import Lean.Declaration
+public import Lean.Elab.Term.TermElabM
+import Lean.Elab.SyntheticMVars
+
 public import GeneralizationLinter.Analysis.Candidates
+import GeneralizationLinter.Analysis.ReSynth
 
 open Lean Meta Elab Term
 

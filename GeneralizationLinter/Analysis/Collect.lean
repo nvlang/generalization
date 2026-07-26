@@ -5,9 +5,13 @@ Authors: Noah Lang
 -/
 module
 
+import Lean.Util.CollectLevelParams
+import Lean.Meta.Transform
+
 public import GeneralizationLinter.Graph.Canonicalization
 import GeneralizationLinter.Graph.ClassGraph
 import GeneralizationLinter.Analysis.Options
+
 open Lean Meta
 open Std (HashMap)
 
