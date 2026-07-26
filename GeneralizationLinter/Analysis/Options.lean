@@ -165,6 +165,11 @@ public register_option generalizeTypeclasses.redundancyGuard : Bool := {
     to be vacuous should be blocked. Not all vacuity is detected."
 }
 
+public register_option generalizationLinter.stats : Bool := {
+  defValue := false,
+  descr := "[For experiments only] log a GL_STATS info message for each linted declaration."
+}
+
 public def linterConfigOfOptions (opts : Lean.Options) : LinterConfig :=
   {
     splitPolicy := (SplitPolicy.ofString? (generalizeTypeclasses.split.get opts)).getD .forbid,

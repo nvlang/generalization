@@ -197,18 +197,35 @@ def wrapperEffectiveOptions? (wrappers : Array Syntax) :
   return effectiveOpts
 
 
+private def statsOfGraded (gw : GradedWeakening) : Json :=
+  let c := gw.candidate
+  let shape := match c.shape with
+    | .drop => "drop" | .weaken _ => "weaken" | .split _ => "split"
+  let grade := match gw.grade with
+    | .holds p => s!"holds: {p.binders} {p.concl} {p.body}"
+    | .unverified => "unverified"
+  Json.mkObj [
+    ("binder", toJson (toString c.binder.origName)),
+    ("idx", toJson c.binder.idx),
+    ("shape", toJson shape),
+    ("targets", toJson (c.replacements.map fun v => toString v.name)),
+    ("grade", toJson grade)
+  ]
+
+
 /--
 Run the typeclass linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
 whose value is described by syntax tree `bodyStx`.
 -/
 def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (src : DeclSource) (declName : Name)
-    (omitCaveat : Bool := false) : TermElabM Unit := do
+    (omitCaveat : Bool := false) : TermElabM (Array GradedWeakening) := do
   let caveat := if omitCaveat then
     " This declaration's scope has one or more variables omitted from it, which means that the \
       suggested weakening may require the declaration or its value to be modified, or the omit \
       command to be removed, to be valid." else ""
-  for gw in ← gradedWeakenings cfg graph const src do
+  let gws ← gradedWeakenings cfg graph const src
+  for gw in gws do
     let c := gw.candidate
     let (disp, target) ← describeCandidate const c
     let msg := match gw.grade with
@@ -226,6 +243,7 @@ def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : Consta
       | .unverified =>
         m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {target}."
     logLint linter.generalizeTypeclasses (← getRef) msg
+  return gws
 
 
 /--
@@ -291,9 +309,26 @@ public def linter : Linter where
           let const ← getConstInfo thm.name
           -- Skip `where`/`let rec` helpers that `getTheorems` may report.
           unless declIdMatches declCmd thm.name do continue
-          if let some graph := graph? then
-            withHeartbeatBudget cfg.perCandidateHeartbeats () do
+          -- Stats
+          let statsOn := generalizationLinter.stats.get (← getOptions)
+          let h0 ← IO.getNumHeartbeats
+          let z : Bool × Array Json := (false, #[])
+          let (targeted, emits) ← if let some graph := graph? then
+            withHeartbeatBudget cfg.perCandidateHeartbeats z do
               if ← hasTargetedClassBinder const.type then
-                lintTypeclassesFor cfg graph const src thm.name (omitCaveat := omitTouched)
+                let gws ← lintTypeclassesFor cfg graph const src thm.name
+                  (omitCaveat := omitTouched)
+                return (true, if statsOn then gws.map statsOfGraded else #[])
+              else return z
+            else pure z
+          if statsOn then
+            let hb := (← IO.getNumHeartbeats) - h0
+            logInfo m!"GL_STATS {(Json.mkObj [
+              ("decl", toJson (toString thm.name)),
+              ("heartbeats", toJson hb),
+              ("targeted", toJson targeted),
+              ("suppressed", toJson tcSuppressed),
+              ("emits", Json.arr emits)]).compress}"
+
 
 initialize addLinter linter
