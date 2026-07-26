@@ -25,7 +25,7 @@ public inductive WeakeningShape where
 deriving Inhabited
 
 
-/-- An unverified weakening proposal. See also `ConfirmedWeakening`. -/
+/-- An unverified weakening proposal. -/
 public structure Candidate where
   /-- The binder this candidate proposes weakening. -/
   binder : TargetedBinder
