@@ -55,12 +55,17 @@ public structure LinterConfig where
   -/
   absencePolicy : AbsencePolicy := .failClosed
   /--
-  How many heartbeats the linter may spend analyzing a single declaration. Set this to 0 to remove
-  this limit. The default value is `4_000_000` (4 million), which should suffice for around 88% of
-  emissions. Higher values increase both maximum latency and coverage; for example, a value of
-  `20_000_000` should suffice for around 98% of emissions.
+  How many heartbeats the linter may spend verifying a single weakening candidate. Set this to 0 to
+  remove this limit.
   -/
   perCandidateHeartbeats : Nat := 4_000_000
+
+  /--
+  How many heartbeats the linter may spend analyzing a single declaration and generating weakening
+  candidates. Set this to 0 to remove this limit.
+  -/
+  generationHeartbeats : Nat := 4_000_000
+
   /--
   Controls whether typeclass weakenings that would involve splitting a single hypothesis into two
   weaker ones should be suggested.
@@ -119,11 +124,16 @@ public register_option generalizeTypeclasses.targetImplicit : Bool := {
     potential weakenings. Instance implicit binders are always scanned if the linter is active."
 }
 
+public register_option generalizeTypeclasses.generationHeartbeats : Nat := {
+  defValue := 4_000_000,
+  descr := "how many heartbeats the linter may spend analyzing a single declaration and generating
+    weakening candidates. Set this to 0 to remove this limit. Defaults to 4_000_000."
+}
+
 public register_option generalizeTypeclasses.perCandidateHeartbeats : Nat := {
   defValue := 4_000_000,
-  descr := "per-candidate heartbeat budget for the linter's analysis. If n is the number of targeted
-    binders in a given declaration and m is the ambient maxHeartbeats, then, for each declaration,
-    the linter will take at most (n + 2) × min(perCandidateHeartbeats, m) heartbeats."
+  descr := "how many heartbeats the linter may spend verifying a single weakening candidate. Set
+    this to 0 to remove this limit. Defaults to 4_000_000."
 }
 
 public register_option generalizeTypeclasses.acceptOmits : Bool := {
@@ -173,6 +183,7 @@ public register_option generalizationLinter.stats : Bool := {
 public def linterConfigOfOptions (opts : Lean.Options) : LinterConfig :=
   {
     splitPolicy := (SplitPolicy.ofString? (generalizeTypeclasses.split.get opts)).getD .forbid,
+    generationHeartbeats := generalizeTypeclasses.generationHeartbeats.get opts,
     perCandidateHeartbeats := generalizeTypeclasses.perCandidateHeartbeats.get opts,
     verify := generalizeTypeclasses.verify.get opts,
     subsumption := generalizeTypeclasses.subsumption.get opts,

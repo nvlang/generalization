@@ -351,7 +351,7 @@ declaration.
 public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (src : DeclSource) : TermElabM (Array GradedWeakening) := do
 
-  let candidates ← withHeartbeatBudget cfg.perCandidateHeartbeats #[] (guardedCandidates cfg graph const)
+  let candidates ← withHeartbeatBudget cfg.generationHeartbeats #[] (guardedCandidates cfg graph const)
   if candidates.isEmpty then return #[]
   -- Get the binder names, i.e., for `[inst : Monoid M]`, this would be `` `inst ``. Note that
   -- `TargetedBinder.origName` is the name of the _class_, i.e., for `[inst : Monoid M]`, it would

@@ -197,6 +197,20 @@ def wrapperEffectiveOptions? (wrappers : Array Syntax) :
   return effectiveOpts
 
 
+private inductive Stats.Outcome
+  | noGraph
+  | untargeted
+  | aborted
+  | analyzed
+
+
+private def Stats.Outcome.toJson : Stats.Outcome → Json
+  | .noGraph => "noGraph"
+  | .untargeted => "untargeted"
+  | .aborted => "aborted"
+  | .analyzed => "analyzed"
+
+
 private def statsOfGraded (gw : GradedWeakening) : Json :=
   let c := gw.candidate
   let shape := match c.shape with
@@ -312,23 +326,27 @@ public def linter : Linter where
           -- Stats
           let statsOn := generalizationLinter.stats.get (← getOptions)
           let h0 ← IO.getNumHeartbeats
-          let z : Bool × Array Json := (false, #[])
-          let (targeted, emits) ← if let some graph := graph? then
-            withHeartbeatBudget cfg.perCandidateHeartbeats z do
-              if ← hasTargetedClassBinder const.type then
-                let gws ← lintTypeclassesFor cfg graph const src thm.name
-                  (omitCaveat := omitTouched)
-                return (true, if statsOn then gws.map statsOfGraded else #[])
-              else return z
-            else pure z
-          if statsOn then
-            let hb := (← IO.getNumHeartbeats) - h0
-            logInfo m!"GL_STATS {(Json.mkObj [
-              ("decl", toJson (toString thm.name)),
-              ("heartbeats", toJson hb),
-              ("targeted", toJson targeted),
-              ("suppressed", toJson tcSuppressed),
-              ("emits", Json.arr emits)]).compress}"
+          let (outcome, emits) : Stats.Outcome × Array Json ←
+            if let some graph := graph? then
+              tryCatchRuntimeEx (
+                  do
+                    if ← hasTargetedClassBinder const.type then
+                      let gws ← lintTypeclassesFor cfg graph const src thm.name
+                        (omitCaveat := omitTouched)
+                      return (.analyzed, if statsOn then gws.map statsOfGraded else #[])
+                    else return (.untargeted, #[])
+                ) (
+                  fun _ => pure (.aborted, #[])
+                )
+              else (pure (.noGraph, #[]))
+            if statsOn then
+              let hb := (← IO.getNumHeartbeats) - h0
+              logInfo m!"GL_STATS {(Json.mkObj [
+                ("decl", toJson (toString thm.name)),
+                ("heartbeats", toJson hb),
+                ("outcome", outcome.toJson),
+                ("suppressed", toJson tcSuppressed),
+                ("emits", Json.arr emits)]).compress}"
 
 
 initialize addLinter linter
