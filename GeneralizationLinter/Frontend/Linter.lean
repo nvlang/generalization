@@ -122,13 +122,13 @@ configuration).
 def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
   let opts ← getOptions
   let implicit := opts.getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
-  let rec go : Expr → MetaM Bool
-    | .forallE _ binderType body binderInfo => do
-      let targeted := binderInfo.isInstImplicit ||
-        (implicit && binderInfo matches .implicit | .strictImplicit)
-      if targeted && (← isClass? binderType).isSome then return true else go body
-    | _ => return false
-  go type
+  forallTelescope type fun args _ => do
+    for arg in args do
+      let ld ← arg.fvarId!.getDecl
+      let targeted := ld.binderInfo.isInstImplicit ||
+        (implicit && ld.binderInfo matches .implicit | .strictImplicit)
+      if targeted && (← isClass? ld.type).isSome then return true
+    return false
 
 
 /--
