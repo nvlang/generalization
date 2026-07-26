@@ -1,13 +1,2 @@
 module
-public import GeneralizationLinter.Graph.Digraph
-public import GeneralizationLinter.Graph.Vertex
-public import GeneralizationLinter.Graph.Canonicalization
-public import GeneralizationLinter.Graph.ClassGraph
-public import GeneralizationLinter.Graph.GraphCache
-public import GeneralizationLinter.Analysis.Options
-public import GeneralizationLinter.Analysis.Collect
-public import GeneralizationLinter.Analysis.Candidates
-public import GeneralizationLinter.Analysis.ReSynth
-public import GeneralizationLinter.Analysis.Replay
-public import GeneralizationLinter.Analysis.Verify
-public import GeneralizationLinter.Frontend.Linter
+import GeneralizationLinter.Frontend.Linter
