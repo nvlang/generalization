@@ -23,6 +23,7 @@ public inductive WeakeningShape where
   | split (weakerVertices : Array Vertex)
 deriving Inhabited
 
+
 /-- An unverified weakening proposal. See also `ConfirmedWeakening`. -/
 public structure Candidate where
   /-- The binder this candidate proposes weakening. -/
@@ -31,12 +32,14 @@ public structure Candidate where
   shape : WeakeningShape
 deriving Inhabited
 
+
 /-- The `Vertex`es of the classes of the proposed replacements. -/
 public def Candidate.replacements (c : Candidate) : Array Vertex :=
   match c.shape with
   | .drop => #[]
   | .weaken t => #[t]
   | .split ts => ts
+
 
 /-- Everything `suggest` needs to produce its answers, compiled into one structure. -/
 private structure MeetContext where
@@ -48,6 +51,7 @@ private structure MeetContext where
   splitPolicy : SplitPolicy
   /-- Subsumption in vertex matching. -/
   includeSubsumers : Bool
+
 
 /-- Returns `true` iff `u` reaches `v` in `ctx.graph`. -/
 def MeetContext.reachesV (ctx : MeetContext) (u v : Vertex) : Bool :=
@@ -114,6 +118,7 @@ where
     -- definitional equality.
     | a, b => if a == b then some σ else none
 
+
 /-- Return the data descendants of `v` in `ctx.graph` as an array `Array Vertex`. -/
 def MeetContext.dataDescendants (ctx : MeetContext) (v : Vertex) : Array Vertex :=
   let cond := ctx.graph.condensation
@@ -122,6 +127,7 @@ def MeetContext.dataDescendants (ctx : MeetContext) (v : Vertex) : Array Vertex 
   | some sccᵥ => (cond.downSetsByIndex.getD sccᵥ {}).toArray.foldl (init := #[]) fun sccMembersᵥ sccDesc =>
       (cond.members.getD sccDesc #[]).foldl (init := sccMembersᵥ) fun dataDescsᵥ desc =>
         if ctx.graph.isSubsingleton desc then dataDescsᵥ else dataDescsᵥ.push desc
+
 
 /--
 Returns `true` iff, within `ctx.graph`, `u` and `v` (or any subsumers thereof) share a data-carrying
@@ -170,6 +176,7 @@ def MeetContext.filterReqVerts (ctx : MeetContext) (b : TargetedBinder)
   byArity.filter fun u =>
     ¬ byArity.any fun v => v != u && ctx.reachesV v u && ¬ ctx.reachesV u v
 
+
 /--
 These are class names that Mathlib has access to but which, if found within an SCC, have preferred
 alternatives.
@@ -186,6 +193,7 @@ def sccRepresentative (scc : Array Vertex) : Option Vertex :=
     | none => some v
     | some w => if (v.name.cmp w.name).isLT then some v else some w
   pick (scc.filter fun v => !sccDemotedHeads.contains v.name) <|> pick scc
+
 
 /--
 Returns the meet of `reqs` in `ctx.graph.condensation`, if a unique meet exists. Otherwise, returns
@@ -216,6 +224,7 @@ def MeetContext.strictlyWeaker (ctx : MeetContext) (b : TargetedBinder) (v : Ver
   let bVertex := b.toVertex
   v != bVertex && ctx.reachesV bVertex v && ¬ ctx.reachesV v bVertex
 
+
 /--
 Split `reqs` up into non-data-descendant-sharing blocks and return the meets of the blocks as an
 array, or `none` if `reqs` can't be split up, or if any of the blocks don't have a meet, or if any
@@ -232,6 +241,7 @@ def MeetContext.splitMeets (ctx : MeetContext) (b : TargetedBinder) (reqs : Arra
     unless ctx.strictlyWeaker b m do return none
     out := out.push m
   return some out
+
 
 /--
 What might we replace `b` with, given that `b` requires (or, more accurately, uses) `reqVerts`?
@@ -261,6 +271,7 @@ def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts 
     | some meets, none => some meets
     | none, some m => some #[m]
     | none, none => none
+
 
 /--
 Return a (possibly empty) array of candidate weakenings for any of the targeted binders `binders`

@@ -160,6 +160,7 @@ def keySlots (head : Name) : MetaM (Array Bool) := do
   keySlotsCacheRef.modify (·.insert head slots) -- cache result
   return slots
 
+
 /--
 The ***key arguments*** of an application `fn a₁ … aₙ` (`vals = #[a₁, …, aₙ]`), in accordance with
 `keySlots fn`.
@@ -198,6 +199,7 @@ public def eraseHeadLevels : Expr → Expr
   | .const c _ => .const c []
   | e => e
 
+
 /--
 Retrieves the value of a `Nat`-valued argument.
 
@@ -230,6 +232,7 @@ two things:
 of the HashMap.
 -/
 public abbrev CanonVarsM := StateT ((HashMap FVarId Nat) × (Array Expr)) MetaM
+
 
 /--
 Canonicalize a single binder/argument.
@@ -276,6 +279,7 @@ public partial def canonArg (e : Expr) : CanonVarsM Expr := do
       let k := carriers.size
       set (m, carriers.push e)
       return .bvar k
+
 
 /--
 Canonicalized universe arguments for a head with universe arguments `lvls`.
@@ -489,6 +493,7 @@ public partial def elabPatternEntry (e : Expr) : MetaM (Option Expr) := do
     vals := vals.push arg'
   let some slots := placeAtSlots keep vals | return none
   try some <$> mkAppOptM h slots catch _ => return none
+
 
 /--
 The inverse of `toKey` for non-family class binders. Reifies the class `name` by instantiating the

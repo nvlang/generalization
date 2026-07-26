@@ -21,11 +21,14 @@ open Std (HashSet)
 /-- Allocate storage for the result of `ClassGraph.scanInstances` on the imported instances. -/
 initialize importedScanRef : IO.Ref (Option (Array ClassEdge × HashSet Name)) ← IO.mkRef none
 
+
 /-- Allocate storage for the cached `ClassGraph`. -/
 initialize classGraphCacheRef : IO.Ref (Option (UInt64 × ClassGraph)) ← IO.mkRef none
 
+
 /-- For debugging. -/
 initialize graphBuildCountRef : IO.Ref Nat ← IO.mkRef 0
+
 
 /-- Compute fingerprint of local instance declarations, for cache invalidation. -/
 public def localInstanceFingerprint : MetaM UInt64 := do
@@ -34,6 +37,7 @@ public def localInstanceFingerprint : MetaM UInt64 := do
   return env.constants.map₂.foldl (init := (7 : UInt64)) fun h name const =>
     -- `name` is the name of a local instance, and `const` is the `ConstantInfo` associated with it.
     if instances.contains name then mixHash h (mixHash name.hash const.type.hash) else h
+
 
 /-- Cached class graph. -/
 public def cachedClassGraph : MetaM ClassGraph := do

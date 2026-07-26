@@ -30,6 +30,7 @@ structure ReSynthContext where
   /-- Set containing the fvar of the targeted binder. Note that `staleW ⊆ stale`. -/
   staleW : HashSet FVarId
 
+
 /-- Context established by `withWeakenedDecl` and handed to its continuation. -/
 structure WeakenedDeclContext extends ReSynthContext where
   /-- The original telescope. -/
@@ -46,6 +47,7 @@ structure WeakenedDeclContext extends ReSynthContext where
 def WeakenedDeclContext.weakenedTelescope (ctx : WeakenedDeclContext) : Array Expr :=
   ctx.pre ++ ctx.newBinders ++ ctx.rebuiltPost
 
+
 /-- Wrapper around `reifyClass` / `reify` that adds support for family class binders. -/
 public def replaceBinderType (oldType : Expr) (replacement : Vertex) : MetaM (Option Expr) := do
   -- If `oldType` reduces to a family binder `∀ prefixes, body` (where `body` is a class
@@ -59,6 +61,7 @@ public def replaceBinderType (oldType : Expr) (replacement : Vertex) : MetaM (Op
   else do
     let oldKey ← toKey oldType
     reify replacement.name replacement.pattern oldKey.subst
+
 
 /-- Does `e` have any fvar that is contained in `stale`? -/
 def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
@@ -133,6 +136,7 @@ partial def ReSynthContext.reSynthExpr (ctx : ReSynthContext) (e : Expr) :
   -- The remaining expressions can't contain any fvars to remap or instances to resynthesize, so we
   -- return them as they are.
   | .const .. | .sort .. | .lit .. | .bvar .. | .mvar .. => return e
+
 
 /--
 Rebuild an application argument.
@@ -311,6 +315,7 @@ def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α
   withReader (fun ctx => { ctx with
     localInstances := ctx.localInstances.filter (·.fvar.fvarId! != drop) }) act
 
+
 /--
 Returns `true` iff every `repl[i]`'s class is already synthesizable from the other binders (the ones
 not being replaced).
@@ -435,6 +440,7 @@ public def verifyWeakening (ciType val : Expr) (n : Nat) (repls : Array Vertex) 
       some <$> isDefEq bodyT' concl'
     catch _ => return false
   return holds?.getD false
+
 
 /--
 Given a statement with constant info `const`, returns the type of said statement after weakening,

@@ -127,6 +127,7 @@ def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
     | _ => return false
   go type
 
+
 /--
 Given a weakening candidate `c` for a declaration with constant info `const`, returns a pair of
 strings, the first string indicating what the existing binder looks like (e.g., `Group G`)

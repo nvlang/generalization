@@ -45,6 +45,7 @@ public def SplitPolicy.ofString? : String → Option SplitPolicy
   | "prefer" => some .prefer
   | _        => none
 
+
 /--
 Configuration for the typeclass generalization linter.
 -/

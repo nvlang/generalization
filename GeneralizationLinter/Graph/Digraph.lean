@@ -76,11 +76,14 @@ variable {V : Type u} [BEq V] [Hashable V]
 
 namespace Digraph
 
+
 /-- Returns an array of the vertices of `G` in some order. -/
 public def vertices (G : Digraph V) : Array V := G.adj.keysArray
 
+
 /-- Returns `true` iff `G` contains the vertex `v`. -/
 public def contains (G : Digraph V) (v : V) : Bool := G.adj.contains v
+
 
 /--
 Returns the immediate successors of `v` in `G`.
@@ -125,6 +128,7 @@ public partial def dfs (G : Digraph V) (v : V) (acc : Array V) (vis : HashSet V)
 /-- Returns the set of vertices of `G` reachable from `v`. -/
 public def downSet (G : Digraph V) (v : V) : HashSet V := (G.dfs v #[] {}).2
 
+
 /-- Returns map from vertices to the set of vertices that each can reach. -/
 public def downSets (G : Digraph V) : HashMap V (HashSet V) :=
   G.adj.fold (init := {}) fun sets v _ => sets.insert v (G.downSet v)
@@ -132,10 +136,12 @@ public def downSets (G : Digraph V) : HashMap V (HashSet V) :=
 public def postorder (G : Digraph V) : Array V :=
   (G.vertices.foldl (init := (#[], {})) fun (acc, vis) v => G.dfs v acc vis).1
 
+
 /-- Returns [transpose](https://en.wikipedia.org/wiki/Transpose_graph) of `G`. -/
 public def transpose (G : Digraph V) : Digraph V :=
   G.adj.fold (init := {}) fun G' s ts =>
     ts.foldl (init := G'.insertVertex s) fun G'' t => G''.insertEdge t s
+
 
 /-! ## Condensation -/
 
@@ -154,6 +160,7 @@ public def sccs (G : Digraph V) : Array (Array V) :=
           (vis, comps.push comp)
   ).2
 
+
 public structure Condensation (V : Type u) [BEq V] [Hashable V] where
   /-- Digraph of indices. Guaranteed to be a DAG. -/
   graph : Digraph Nat
@@ -165,6 +172,7 @@ public structure Condensation (V : Type u) [BEq V] [Hashable V] where
   downSetsByIndex : HashMap Nat (HashSet Nat)
   /-- `graph.vertices`, cached inside `condense`. -/
   vertices : Array Nat
+
 
 /--
 Condense digraph `G` into DAG of SCCs of `G` and return the result as a
@@ -185,6 +193,7 @@ public def condense (G : Digraph V) : Condensation V :=
       let idx_t := componentsMap.getD t 0
       if idx_s == idx_t then graph'' else graph''.insertEdge idx_s idx_t
   { graph, members, componentsMap, downSetsByIndex := graph.downSets, vertices := graph.vertices }
+
 
 namespace Condensation
 
@@ -207,12 +216,12 @@ public inductive AbsencePolicy
   | failOpenGuarded
 deriving BEq, Repr
 
+
 /--
 **Idea:** Given the set of classes that a theorem uses, find the minimal common ancestor of that set
 in the class DAG, i.e., the weakest common ancestor of the elements of the set (i.e., their _meet_),
 if a unique one exists. The class DAG is not a lattice, however, so the meet is not guaranteed to
 exist. In those cases, an antichain of incomparable answers is returned.
-
 
 ---
 **Implementation notes**
@@ -301,6 +310,7 @@ public def minCommonAncestors (c : Condensation V) (reqs : Array (HashSet V))
     -- convert each SCC index to the array of its members
     minimal.map fun ca => c.members.getD ca #[]
 
+
 /--
 Given the condensation of a graph and two vertices `s` and `t` of the graph
 (pre-condensation), returns whether `s` reaches `t` in the graph
@@ -310,6 +320,7 @@ public def reaches (c : Condensation V) (s t : V) : Bool :=
   match c.componentsMap[s]?, c.componentsMap[t]? with
   | some s_idx, some t_idx => (c.downSetsByIndex.getD s_idx {}).contains t_idx
   | _, _ => false
+
 
 /--
 Given an array `xs` and methods
@@ -352,6 +363,7 @@ public def coalesceWith {α : Type _} [Inhabited α] (fuse : α → α → α) (
       | none => xs
       | some xs' => loop xs' fuel
   loop xs (xs.size * xs.size + 1)
+
 
 /--
 Partitions `used` into subsets whose down-sets are disconnected according to `conn`.

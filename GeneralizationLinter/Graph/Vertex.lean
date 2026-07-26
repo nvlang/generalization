@@ -23,6 +23,7 @@ public inductive UniverseLevels
   | concrete (levels : Array Level) -- specific universe levels only
 deriving BEq, Hashable, Inhabited
 
+
 /--
 A vertex of the class graph.
 -/
@@ -118,6 +119,7 @@ public structure Vertex where
   levels : UniverseLevels
 deriving BEq, Hashable, Inhabited
 
+
 /--
 A specific class application parsed at runtime into a (canonicalized) vertex together with the
 original values of the canonicalized arguments.
@@ -159,6 +161,7 @@ public structure Key extends Vertex where
   familyArity : Nat := 0
 deriving Inhabited
 
+
 /--
 First-order¹ syntactic matcher.
 
@@ -194,6 +197,7 @@ private partial def matchE (env : HashMap Nat Expr) (pattern target : Expr) :
       else none
     else if pattern == target then some env else none
 
+
 /--
 Returns `true` iff `pattern` subsumes `target`.
 
@@ -215,6 +219,7 @@ subsumes #[List (.bvar 0)] #[List Nat]  -- true
 public def subsumes (pattern target : Array Expr) : Bool :=
   pattern.size == target.size &&
     ((pattern.zip target).foldlM (fun env (p, t) => matchE env p t) ({} : HashMap Nat Expr)).isSome
+
 
 /--
 Given
@@ -319,6 +324,7 @@ where
 
 open Lean Expr
 
+
 /--
 Given the arguments `#[a₁, …, aₙ]` of an application `f a₁ … aₙ`, returns an exhaustive list of all
 the arrays `#[p₁, …, pₙ]` for which we have that `f p₁ … pₙ` subsumes `f a₁ … aₙ`.
@@ -371,6 +377,7 @@ private partial def shapeCount : Expr → Nat
     if e.getAppArgs.isEmpty then 2
     else 1 + e.getAppArgs.foldl (init := 1) fun shapeCount' arg => shapeCount' * shapeCount arg
 
+
 /--
 Walks `args` and counts multiplicities of colors, returning a map from colors to their
 multiplicities. In other words, for a given expression `e`, the map will indicate how often `e`
@@ -395,6 +402,7 @@ def enumBudget (args : Array Expr) : Nat :=
   let shapes := args.foldl (init := 1) fun shapes' arg => shapes' * shapeCount arg
   let merges := (colorMults args).fold (init := 1) fun merges' _ k => merges' * bell k
   shapes * merges
+
 
 /--
 If the number of subsumers of `v.pattern` isn't estimated to exceed `maxCombined` (default 2048),

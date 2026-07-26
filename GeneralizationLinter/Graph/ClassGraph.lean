@@ -60,6 +60,7 @@ public def isSortTyped (a : Expr) : MetaM Bool :=
   -- while `(← whnfR (← inferType K)).isSort` returns `true`.
   return (← whnfR (← inferType a)).isSort
 
+
 /--
 The non-instance-implicit arguments of a class application. These are the arguments that are used by
 `reifyClass` to reify a suggestion candidate. We call these arguments the ***frame arguments*** or
@@ -85,6 +86,7 @@ public def frameArgs (classAppE : Expr) : MetaM (Array Expr) := do
   let paramInfos := (← getFunInfo classAppE.getAppFn).paramInfo
   return classAppE.getAppArgs.zipIdx.filterMap fun (arg, i) =>
     if (paramInfos[i]?.map (·.binderInfo.isInstImplicit)).getD false then none else some arg
+
 
 /--
 Returns `true` iff `e` is "statable" from `sArgs`.
@@ -161,6 +163,7 @@ where go (sArgs : Array Expr) (e : Expr) : MetaM Bool := do
   if ← isSynonymFormer head then return false
   unless isTypeConstructor (← getEnv) fn do return false
   (← frameArgs e).allM (go sArgs)
+
 
 /--
 Helper for `extractEdge?` which, given some information about the instance declaration that
@@ -319,6 +322,7 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     unless srcK.subst.all (·.isFVar) && tgtK.subst.all (·.isFVar) do return none
     return some { src := srcK.toVertex, tgt := tgtK.toVertex }
 
+
 /-! ## Build -/
 
 /-- The class graph. -/
@@ -332,6 +336,7 @@ public structure ClassGraph where
   isSubsingleton : Vertex → Bool
   /-- Condensation of the class graph. -/
   condensation : Condensation Vertex
+
 
 /--
 For a class with name `name`, return `true` iff any application of this class is a subsingleton.
@@ -387,6 +392,7 @@ def isSubsingletonClass (name : Name) (synthesize : Bool := true) : MetaM Bool :
     | _ => return some false
   return r.getD false
 
+
 /--
 Scans every name in `names` (which is expected to be a list of class and instance declarations),
 collecting weakening edges and taking note of subsingleton classes as it goes.
@@ -410,6 +416,7 @@ public def ClassGraph.scanInstances (names : Array Name) :
         if let some h := concl.getAppArgs.back?.bind (·.getAppFn.constName?) then
           subHeads := subHeads.insert h
   return (edges, subHeads)
+
 
 /--
 Assembles weakening edges and heads of subsingleton classes into a `ClassGraph`.

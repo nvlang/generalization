@@ -243,6 +243,7 @@ public structure BinderId where
   fvar : FVarId
 deriving BEq, Hashable, Inhabited
 
+
 /-- Targeted binder in a declaration. -/
 public structure TargetedBinder extends Key where
   /-- fvar ID generated for this binder when `getTargetedBinders` telescopes the declaration. -/
@@ -257,8 +258,10 @@ public structure TargetedBinder extends Key where
   binderInfo : BinderInfo
 deriving Inhabited
 
+
 /-- Get `Name` of class head of a `TargetedBinder`'s type. -/
 public def TargetedBinder.origName (b : TargetedBinder) : Name := b.toVertex.name
+
 
 /--
 Maximal instance chain.
@@ -287,6 +290,7 @@ public structure MIChain where
   /-- The `TargetedBinder.fvar` corresponding to the instance at the root of the chain. -/
   inst : BinderId
 deriving Inhabited
+
 
 /--
 A minimal requirement that a proof or statement imposes on a specific targeted binder of the
@@ -348,6 +352,7 @@ public def isTargetedBinder (ld : LocalDecl) : MetaM Bool := do
     return (← getOptions).getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
   | .default => return false
 
+
 /--
 Given `type` of the form `forall xs, A`, extract the targeted binders of `xs` as local declarations
 `lds` and run `k lds A`.
@@ -367,6 +372,7 @@ public def targetedBinderTelescope {α : Type} (type : Expr) (k : Array LocalDec
       let ld ← x.fvarId!.getDecl
       if ← isTargetedBinder ld then lds := lds.push ld
     k lds concl
+
 
 /-- Get the targeted binders of a declaration. -/
 public def getTargetedBinders (decl : Expr) : MetaM (Array TargetedBinder) := do
@@ -416,6 +422,7 @@ public def declSource? (fn : Name) : MetaM (Option Nat) := do
   declSourceCacheRef.modify (·.insert fn verdict)
   return verdict
 
+
 /--
 Given the instance arguments `inst₁ … instₙ` of an application, check if there's a _unique_ `i` such
 that `instᵢ`'s type contains `instⱼ` for all `j ∈ {1, …, n}`. If there is, return `some instᵢ`.
@@ -439,8 +446,10 @@ def sourceArg? (e : Expr) : MetaM (Option Expr) := do
     args.allM fun a => return a == arg || (argT.find? (· == a)).isSome
   return if cands.size == 1 then cands[0]? else none
 
+
 /-- State monad to keep track of the `MIChain`s we've collected. -/
 private abbrev CollectM := StateRefT (Array MIChain) MetaM
+
 
 /--
 Does the constant `name` have any `outParam` or `semiOutParam` parameter?
@@ -540,6 +549,7 @@ def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) : MetaM (Option Key
   if openArity head ≤ openArity srcKey then return some head
   return if hasDispatchSlot (← getEnv) head.name then none else some head
 
+
 /--
 If `e` is an application of a dynamically generated constant (e.g., `_proof_*`, `T.match_1`, etc.)
 and which has some targeted binder's fvar as one of its direct arguments, we unfold `e` and return
@@ -558,6 +568,7 @@ private def unfoldInternalHead? (binderIdOf : HashMap FVarId BinderId) (e : Expr
 
 mutual
 
+
 /--
 Decide what to do with `e`:
 * If `e` is a class application `C a₁ … aₙ`, then call `collect` on `e`, starting a new chain with
@@ -568,6 +579,7 @@ private partial def route (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
   if (← isClass? (← inferType e)).isSome then collect binderIdOf e none
   else walk binderIdOf e
+
 
 /--
 If `e` corresponds to a maximal instance chain, `collect` will record that instance chain as an
@@ -617,6 +629,7 @@ private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     -- confluence: start new chain for each arg
     for arg in args do route binderIdOf arg
 
+
 /-- Find any spot in `e` where the elaborator put an instance transformation or root instance. -/
 private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
@@ -643,6 +656,7 @@ private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
 
 end
 
+
 /-- Collect all `MIChain`s from `decl` and `proof`. -/
 public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
     MetaM (Array MIChain) := do
@@ -661,6 +675,7 @@ public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
       walk binderIdOf (← Core.betaReduce (mkAppN proof xs))
     let (_, chains) ← go.run #[]
     return chains
+
 
 /--
 Convert an array of `MIChain`s into an array of `Requirement`s, filtering out `MIChain`s that aren't

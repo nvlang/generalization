@@ -87,12 +87,14 @@ public inductive WrapperClassification where
   | refused
 deriving Inhabited, BEq
 
+
 /--
 `lemma` is a Mathlib macro that the elaborator expands to `theorem`. However, pre-elaboration, its
 `SyntaxNodeKind` is `` `lemma ``, while the pre-elaboration `SyntaxNodeKind` of all other
 declarations that the linter may analize is `Parser.Command.declaration`.
 -/
 public def lemmaKind : SyntaxNodeKind := `lemma
+
 
 /-- Classify "wrappers". -/
 public def classifyWrapper (w: Syntax) : WrapperClassification :=
@@ -206,6 +208,7 @@ public partial def peelWrappers? (stx : Syntax) (wrappers : Array Syntax := #[])
     | .refused => none
   else none
 
+
 /--
 Given the syntax tree `declVal` of a declaration, return the value as a term syntax tree. In the
 case of theorems, this value corresponds to the proof term.
@@ -298,6 +301,7 @@ public def bodyTermOfDeclVal? (dval : Syntax) : TermElabM (Option Syntax) := do
   -- We skip `Parser.Term.whereDecls`; see implementation notes.
   else return none
 
+
 /--
 
 ---
@@ -365,6 +369,7 @@ public def foldSetOptionWrappers? {m : Type → Type} [Monad m] (wrappers : Arra
       | some eopts => opts := eopts
       | none => return none
   return some opts
+
 
 /-- Returns all child nodes of kind `kind`.  -/
 public partial def collectNodes (kind : SyntaxNodeKind) : Syntax → Array Syntax

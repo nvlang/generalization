@@ -44,6 +44,7 @@ public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool
     let some val := declInfo.value? (allowOpaque := true) | return false
     try verifyWeakening declInfo.type val c.binder.idx c.replacements catch _ => return false
 
+
 /--
 Convert weakenings for which `replacementsRedundant` flagged every replacement as redundant to
 drops.
@@ -119,6 +120,7 @@ public structure SourceIntact where
 deriving Inhabited, BEq
 
 public def SourceIntact.all (si : SourceIntact) : Bool := si.binders && si.concl && si.body
+
 
 /--
 Some weakenings may be genuine weakenings, but require modifications in the binders', conclusion's,
@@ -226,6 +228,7 @@ public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Na
       -- dropping the candidate altogether.
       if e.isRuntime then throw e else return false
 
+
 /--
 Basically just `recompiledAgainst? ∘ weakenedStatementType`; if the given declaration's _value_
 post-weakenings re-elaborates and type-checks against the original conclusion, return said value,
@@ -235,6 +238,7 @@ public def recompiledVal? (const : ConstantInfo) (src : DeclSource) (ws : Array 
     TermElabM (Option (Expr × Expr)) := do
   let some W ← weakenedStatementType const ws | return none
   return (← recompiledAgainst? W src const.levelParams).map (W, ·)
+
 
 /--
 Does any binder in `binders`, _as source code_ (`Syntax`), mention the binder `name`?
@@ -314,6 +318,7 @@ public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool
     searched.any fun arg => (arg.find? fun s => (s.isIdent && !name.hasMacroScopes &&
         !name.isAnonymous && s.getId.eraseMacroScopes.getRoot == name)).isSome
 
+
 /--
 If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just
 run `x` with the existing `maxHeartbeats`.
@@ -333,6 +338,7 @@ public structure GradedWeakening where
   candidate : Candidate
   grade : WeakeningGrade
 deriving Inhabited
+
 
 /--
 Given a declaration with constant into `const` and value source code `bodyStx` (as well as a linter
