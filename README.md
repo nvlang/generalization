@@ -4,9 +4,7 @@ This project's primary goal is to contribute a typeclass linter to
 [Mathlib](https://github.com/leanprover-community/mathlib4) which flage overly strong typeclass
 hypotheses and suggests weakenings.
 
-The source code is heavily commented, as this was both important for me to ensure I understood all
-the code, and likewise will be equally important for me to understand the code again in the future
-after I inevitably forget how it worked. Whatever version of this project may ultimately end up in a
+The source code is heavily commented. Whatever version of this project may ultimately end up in a
 Mathlib pull request, its comments/docstrings will be condensed and adapted to comply with Mathlib's
 style guide.
 
@@ -27,18 +25,36 @@ indirectly) has access to it. To turn it on, you can set `linter.generalizeTypec
 set_option linter.generalizeTypeclasses true
 ```
 
-There's a few additional `generalizeTypeclasses.*` options available, and a universe linter under
-`linter.generalizeUniverses` (off by default).
+There's a few additional options available:
 
+- `generalizeTypeclasses.split : String` (`"forbid"` by default): controls whether typeclass
+  weakenings that would involve splitting a single hypothesis into two weaker ones should be
+  suggested. Suggested weakenings that split typeclass hypotheses can violate diamond coherence.
+  Measures are in place to significantly reduce the frequency of such false  positives, but they do
+  not eliminate them, which is why this option is set to `"forbid"` by default. Setting this option
+  to `"allow"` will make the linter suggest splitting a typeclass hypothesis only if it could not be
+  weakened otherwise. Setting this option to `"prefer"` will make the linter always suggest the most
+  general weakening, even if that means suggesting a split where a less general non-splitting
+  weakening would be available
+- `generalizeTypeclasses.targetImplicit : Bool` (`true` by default): controls whether implicit and
+  strict implicit binders should also be scanned for potential weakenings. Instance implicit binders
+  are always scanned if the linter is active.
+- `generalizeTypeclasses.perCandidateHeartbeats : Nat` (`4_000_000` by default): per-candidate
+  heartbeat budget for the linter's analysis. If $n$ is the number of targeted binders in a given
+  declaration and $m$ is the ambient maxHeartbeats, then, for each declaration, the linter will take
+  at most $(n + 2) \cdot \min(\texttt{perCandidateHeartbeats}, m)$ heartbeats.
+- `generalizeTypeclasses.acceptOmits : Bool` (`false` by default): whether declarations within `omit
+  … in` commands or within sections with any `omit …` commands should be analyzed by the linter.
+  Default: `false`. **Warning:** For these declarations, the linter cannot guarantee that its
+  suggestions will elaborate.
 
 ### Implementation
 
-I used `doc-gen4` to generate a [documentation
-website](https://nvlang.github.io/generalization/docs/) automatically from the docstrings in the
-source code.
+For implementation detail, you can consult the [documentation
+website](https://nvlang.github.io/generalization/docs/) that was generated automatically from the docstrings in the source code using `doc-gen4.
 
 
 ## Tool and computational resource disclosure
 
-I used generative artificial intelligence (AI) for this project, primarily Anthropic's Claude
-Fable 5, Opus 5, Opus 4.8, Opus 4.7, and Opus 4.6 models.
+I used generative artificial intelligence (AI) while working on this project, primarily Anthropic's
+Claude Fable 5, Opus 5, Opus 4.8, Opus 4.7, and Opus 4.6 models.
