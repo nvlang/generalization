@@ -5,7 +5,7 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Helpers.Digraph
+public import GeneralizationLinter.Graph.Digraph
 public import Lean.Data.Options
 
 namespace GeneralizationLinter
@@ -37,7 +37,7 @@ public inductive SplitPolicy where
   general non-splitting weakening would be available.
   -/
   | prefer
-  deriving Inhabited
+deriving Inhabited
 
 public def SplitPolicy.ofString? : String → Option SplitPolicy
   | "forbid" => some .forbid
@@ -160,12 +160,6 @@ public register_option generalizeTypeclasses.redundancyGuard : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether weakenings that are detected
     to be vacuous should be blocked. Not all vacuity is detected."
-}
-
-public register_option linter.generalizeUniverses : Bool := {
-  defValue := false,
-  descr := "flag type binders that are pinned to a concrete universe but could be
-    made universe-polymorphic without requiring further modifications."
 }
 
 public def linterConfigOfOptions (opts : Lean.Options) : LinterConfig :=

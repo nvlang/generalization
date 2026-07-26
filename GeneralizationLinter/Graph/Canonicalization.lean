@@ -8,7 +8,7 @@ module
 public import Lean.Expr
 public import Lean.Environment
 public import Lean.Meta.Basic
-public import GeneralizationLinter.Helpers.Vertex
+public import GeneralizationLinter.Graph.Vertex
 import Lean.Meta.SynthInstance
 import Lean.Meta.AppBuilder
 
@@ -511,9 +511,9 @@ fresh local hypotheses `a₁`, …, `aₙ`.
 
 For motivation, see `isSubsingletonClass`.
 -/
-public def withGenericKey {α} (name : Name) (k : Expr → MetaM (Option α)) : MetaM (Option α) := do
+public def withGenericKey {α} (name : Name) (k : Expr → Expr → MetaM (Option α)) : MetaM (Option α) := do
   -- `head` is `name` with universe levels, i.e., `name.{…}`.
   let some (head, sig) ← freshHeadAndSig? name | return none
-  forallTelescopeReducing sig fun params _ => do
+  forallTelescopeReducing (whnfType := true) sig fun params body => do
     let app := mkAppN head params
-    if (← isClass? app).isSome then k app else return none
+    if (← isClass? app).isSome then k app body else return none

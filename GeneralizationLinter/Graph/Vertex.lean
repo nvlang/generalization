@@ -21,7 +21,7 @@ open Std (HashMap)
 public inductive UniverseLevels
   | polymorphic -- universe-polymorphic
   | concrete (levels : Array Level) -- specific universe levels only
-  deriving BEq, Hashable, Inhabited
+deriving BEq, Hashable, Inhabited
 
 /--
 A vertex of the class graph.
@@ -116,7 +116,7 @@ public structure Vertex where
   hypothesize the gains from this may be modest.
   -/
   levels : UniverseLevels
-  deriving BEq, Hashable, Inhabited
+deriving BEq, Hashable, Inhabited
 
 /--
 A specific class application parsed at runtime into a (canonicalized) vertex together with the
@@ -157,7 +157,7 @@ public structure Key extends Vertex where
   ```
   -/
   familyArity : Nat := 0
-  deriving Inhabited
+deriving Inhabited
 
 /--
 First-order¹ syntactic matcher.

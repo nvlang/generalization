@@ -9,7 +9,7 @@ public import Lean.Expr
 public import Lean.Environment
 public import Lean.Meta.Basic
 public import Lean.Meta.FunInfo
-public import GeneralizationLinter.Helpers.ClassGraph
+public import GeneralizationLinter.Graph.ClassGraph
 
 namespace GeneralizationLinter
 
@@ -41,6 +41,13 @@ public def cachedClassGraph : MetaM ClassGraph := do
   if let some (fp', G) := ← classGraphCacheRef.get then
     if fp' == fp then return G
   let env ← getEnv
+  -- Only instances can produce edges. We enforce this restriction because the linter targets
+  -- non-explicit binders for weakening, and non-explicit binders are resoved either using instance
+  -- synthesis, or unification with instance synthesis as a fallback. So, when we analyze a
+  -- declaration, we know that the current binder could be resolved, and we need to make sure that
+  -- the weakened version we suggest can also be resolved, which is guaranteed (-ish) when there's a
+  -- path in the class graph from the stronger to the weaker class, precisely because each edge of
+  -- the class graph corresponds to an instance that instance synthesis can actually make use of.
   let instances := (instanceExtension.getState env).instanceNames
   -- The expensive stuff: Scan imported environment.
   let (importedEdges, importedSubHeads) ← (← importedScanRef.get).getDM do

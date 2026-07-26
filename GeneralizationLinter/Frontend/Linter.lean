@@ -5,13 +5,11 @@ Authors: Noah Lang
 -/
 module
 
-public import Mathlib.Lean.Elab.InfoTree
 public import Lean.Linter.Basic
-public import GeneralizationLinter.Core.Verify
-public import GeneralizationLinter.Core.Recompile
-public import GeneralizationLinter.Core.UniverseGen
-public import GeneralizationLinter.Helpers.GraphCache
-public import GeneralizationLinter.Core.Options
+public import Mathlib.Lean.Elab.InfoTree
+public import GeneralizationLinter.Graph.GraphCache
+public import GeneralizationLinter.Analysis.Options
+public import GeneralizationLinter.Analysis.Verify
 
 open Lean Meta Elab Command Linter Term
 open GeneralizationLinter
@@ -111,8 +109,6 @@ the fully elaborated declaration.
 * `linter`: This is the structure that gets registered via `initialize addLinter linter`, and whose
   `linter.run` function runs for every top-level command.
 * `lintTypeclassesFor`: The function that computes, verifies, and emits the typeclass weakening
-  suggestions.
-* `lintUniversesFor`: The function that checks, verifies, and emits universe generalization
   suggestions.
 -/
 
@@ -227,38 +223,13 @@ def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : Consta
         m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {target}."
     logLint linter.generalizeTypeclasses (← getRef) msg
 
-/--
-Run the universe linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
-whose value is described by syntax tree `bodyStx`.
--/
-def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
-    (declCmd bodyStx : Syntax) (wrappers : Array Syntax) (declName : Name) : TermElabM Unit := do
-  let some declSig := declCmd.find? (·.isOfKind ``Parser.Command.declSig) | return
-  let mut failed : Array PinnedBinder := #[]
-  for b in ← withHeartbeatBudget cfg.perCandidateHeartbeats #[] (pinnedTypeBinders const.type) do
-    if (← withHeartbeatBudget cfg.perCandidateHeartbeats none
-        (universeGeneralization? const declSig bodyStx b wrappers)).isSome then
-      let cur := if b.level == 1 then "Type" else s!"Type {b.level - 1}"
-      logLint linter.generalizeUniverses (← getRef)
-        m!"the `({b.name} : {cur})` binder of `{declName}` can be universe-polymorphic"
-    else
-      failed := failed.push b
-  for lvl in (failed.map (·.level)).toList.eraseDups do
-    let grp := failed.filter (·.level == lvl)
-    if let some (sub, _) ← sharedSubsetLadder? grp (fun sub =>
-        withHeartbeatBudget cfg.perCandidateHeartbeats none
-          (universeGeneralizationsBlocks? const declSig bodyStx #[sub] wrappers)) then
-      let names := ", ".intercalate (sub.toList.map fun b => s!"`{b.name}`")
-      logLint linter.generalizeUniverses (← getRef)
-        m!"the binders {names} of `{declName}` can be jointly universe-polymorphic at one shared level."
-
 
 /--
 This is the structure that gets registered via `initialize addLinter linter`, and whose `linter.run`
 function runs for every top-level command.
 
 For each command that `linter.run` is called on, it figures out whether it should run
-`lintTypeclassesFor` or `lintUniversesFor`, and, if so, sets up the `DeclSource` record that they'll
+`lintTypeclassesFor` and, if so, sets up the `DeclSource` record that they'll
 need and, in the case of `lintTypeclassesFor`, builds (or fetches from cache) the typeclass graph.
 -/
 public def linter : Linter where
@@ -273,8 +244,7 @@ public def linter : Linter where
     let some effectiveOpts ← wrapperEffectiveOptions? wrappers | return
     let lintOpts ← Command.withScope (fun s => { s with opts := effectiveOpts }) getLinterOptions
     let tcOn := getLinterValue linter.generalizeTypeclasses lintOpts
-    let uvOn := getLinterValue linter.generalizeUniverses lintOpts
-    unless tcOn || uvOn do return
+    unless tcOn do return
     let sectionBinders := (← getScope).varDecls.map (·.raw)
     let omitTouched := hasOmitWrapper stx || !(← getScope).omittedVars.isEmpty
     let acceptOmits := generalizeTypeclasses.acceptOmits.get effectiveOpts
@@ -321,7 +291,5 @@ public def linter : Linter where
             withHeartbeatBudget cfg.perCandidateHeartbeats () do
               if ← hasTargetedClassBinder const.type then
                 lintTypeclassesFor cfg graph const src thm.name (omitCaveat := omitTouched)
-          if uvOn then
-            lintUniversesFor cfg const declCmd bodyStx wrappers thm.name
 
 initialize addLinter linter

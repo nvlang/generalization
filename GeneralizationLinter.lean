@@ -1,14 +1,13 @@
 module
-public import GeneralizationLinter.Helpers.Digraph
-public import GeneralizationLinter.Helpers.Vertex
-public import GeneralizationLinter.Helpers.Canonicalization
-public import GeneralizationLinter.Helpers.ClassGraph
-public import GeneralizationLinter.Core.Options
-public import GeneralizationLinter.Core.Collect
-public import GeneralizationLinter.Core.Suggest
-public import GeneralizationLinter.Core.ReSynth
-public import GeneralizationLinter.Core.Verify
-public import GeneralizationLinter.Core.Recompile
-public import GeneralizationLinter.Core.UniverseGen
-public import GeneralizationLinter.Helpers.GraphCache
+public import GeneralizationLinter.Graph.Digraph
+public import GeneralizationLinter.Graph.Vertex
+public import GeneralizationLinter.Graph.Canonicalization
+public import GeneralizationLinter.Graph.ClassGraph
+public import GeneralizationLinter.Graph.GraphCache
+public import GeneralizationLinter.Analysis.Options
+public import GeneralizationLinter.Analysis.Collect
+public import GeneralizationLinter.Analysis.Candidates
+public import GeneralizationLinter.Analysis.ReSynth
+public import GeneralizationLinter.Analysis.Replay
+public import GeneralizationLinter.Analysis.Verify
 public import GeneralizationLinter.Frontend.Linter

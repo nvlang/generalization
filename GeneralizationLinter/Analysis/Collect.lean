@@ -5,9 +5,9 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Helpers.Canonicalization
-public import GeneralizationLinter.Helpers.ClassGraph
-public import GeneralizationLinter.Core.Options
+public import GeneralizationLinter.Graph.Canonicalization
+public import GeneralizationLinter.Graph.ClassGraph
+public import GeneralizationLinter.Analysis.Options
 open Lean Meta
 open Std (HashMap)
 
@@ -241,7 +241,7 @@ may assign to the same binder.
 public structure BinderId where
   /-- The `FVarId` assigned to the binder by the telescope inside `getTargetedBinders`. -/
   fvar : FVarId
-  deriving BEq, Hashable, Inhabited
+deriving BEq, Hashable, Inhabited
 
 /-- Targeted binder in a declaration. -/
 public structure TargetedBinder extends Key where
@@ -255,7 +255,7 @@ public structure TargetedBinder extends Key where
   idx : Nat
   /-- Binder's annotation. -/
   binderInfo : BinderInfo
-  deriving Inhabited
+deriving Inhabited
 
 /-- Get `Name` of class head of a `TargetedBinder`'s type. -/
 public def TargetedBinder.origName (b : TargetedBinder) : Name := b.toVertex.name
@@ -286,7 +286,7 @@ public structure MIChain where
   head : Key
   /-- The `TargetedBinder.fvar` corresponding to the instance at the root of the chain. -/
   inst : BinderId
-  deriving Inhabited
+deriving Inhabited
 
 /--
 A minimal requirement that a proof or statement imposes on a specific targeted binder of the
@@ -327,8 +327,7 @@ able to provide an instance of `Mul α`.
 -/
 public structure Requirement extends Key where
   binder : TargetedBinder
-  deriving Inhabited
-
+deriving Inhabited
 
 
 /--

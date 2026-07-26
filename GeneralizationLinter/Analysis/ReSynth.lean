@@ -5,7 +5,7 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Core.Suggest
+public import GeneralizationLinter.Analysis.Candidates
 open Lean Meta
 open Std (HashMap HashSet)
 
@@ -393,10 +393,12 @@ otherwise, returns `false`.
 
 | `verifyW…` | `recompiledA…` | % of cands | `WeakeningGrade` |
 |:---     |:---     |:--- |:--- |
-| `true`  | `true`  | ≈?% | `WeakeningGrade.statementAndValueIntact` |
-| `true`  | `false` | ≈?% | `WeakeningGrade.needsModification` |
-| `false` | `true`  | ≈0% | `WeakeningGrade.statementAndValueIntact` |
+| `true`  | `true`  | ≈?% | `WeakeningGrade.holds true true true` |
+| `true`  | `false` | ≈?% | `WeakeningGrade.holds ? ? ?` |
+| `false` | `true`  | ≈0% | `WeakeningGrade.holds true true true` |
 | `false` | `false` | ≈?% | N/A; weakening is not valid |
+
+#TODO
 
 For example, the weakening candidate `[Group G] ↝ [MulOneClass M]` demonstrates each possible case
 through the four theorems below (note that, for theorem `ff`, the candidate wouldn't have been

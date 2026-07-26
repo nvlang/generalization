@@ -70,7 +70,7 @@ public structure Digraph (V : Type u) [BEq V] [Hashable V] where
   our purposes. Conceptually, either one would work.
   -/
   adj : HashMap V (Array V) := {}
-  deriving Inhabited
+deriving Inhabited
 
 variable {V : Type u} [BEq V] [Hashable V]
 
@@ -205,7 +205,7 @@ public inductive AbsencePolicy
   | failClosed
   /-- Filter out bad inputs and proceed as usual. -/
   | failOpenGuarded
-  deriving BEq, Repr
+deriving BEq, Repr
 
 /--
 **Idea:** Given the set of classes that a theorem uses, find the minimal common ancestor of that set

@@ -5,8 +5,8 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Helpers.Vertex
-public import GeneralizationLinter.Core.Collect
+public import GeneralizationLinter.Graph.Vertex
+public import GeneralizationLinter.Analysis.Collect
 open Lean Meta
 
 namespace GeneralizationLinter
@@ -21,7 +21,7 @@ public inductive WeakeningShape where
   | weaken (weakerVertex : Vertex)
   /-- Binder can be weakened by splitting it up into `weakerVertices`. -/
   | split (weakerVertices : Array Vertex)
-  deriving Inhabited
+deriving Inhabited
 
 /-- An unverified weakening proposal. See also `ConfirmedWeakening`. -/
 public structure Candidate where
@@ -29,7 +29,7 @@ public structure Candidate where
   binder : TargetedBinder
   /-- The kind of weakening this candidate proposes. -/
   shape : WeakeningShape
-  deriving Inhabited
+deriving Inhabited
 
 /-- The `Vertex`es of the classes of the proposed replacements. -/
 public def Candidate.replacements (c : Candidate) : Array Vertex :=
@@ -37,22 +37,6 @@ public def Candidate.replacements (c : Candidate) : Array Vertex :=
   | .drop => #[]
   | .weaken t => #[t]
   | .split ts => ts
-
-/-- The `Name`s of the classes of the proposed replacements. -/
-public def Candidate.replacementNames (c : Candidate) : Array Name :=
-  match c.shape with
-  | .drop => #[]
-  | .weaken t => #[t.name]
-  | .split ts => ts.map (·.name)
-
-/--
-If `c` is a weakening candidate proposing to weaken a binder to a specific target `t`, return `some
-t`. If `c` proposes dropping the binder or splitting it, return `none`.
--/
-public def Candidate.singleWeakening? (c : Candidate) : Option Vertex :=
-  match c.shape with
-  | .weaken t => some t
-  | _ => none
 
 /-- Everything `suggest` needs to produce its answers, compiled into one structure. -/
 private structure MeetContext where
@@ -282,7 +266,7 @@ def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts 
 Return a (possibly empty) array of candidate weakenings for any of the targeted binders `binders`
 such that the requirements `reqs` are still satisfied.
 -/
-public def candidates (graph : ClassGraph) (binders : Array TargetedBinder)
+public def meetCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
     (reqs : Array Requirement) (cfg : LinterConfig := {}) (includeSubsumers : Bool := true) :
     Array Candidate := Id.run do
   let ctx : MeetContext :=

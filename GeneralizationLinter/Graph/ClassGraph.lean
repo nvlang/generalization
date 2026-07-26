@@ -8,9 +8,9 @@ module
 public import Lean.Expr
 public import Lean.Environment
 public import Lean.Meta
-public import GeneralizationLinter.Helpers.Digraph
-public import GeneralizationLinter.Helpers.Vertex
-public import GeneralizationLinter.Helpers.Canonicalization
+public import GeneralizationLinter.Graph.Digraph
+public import GeneralizationLinter.Graph.Vertex
+public import GeneralizationLinter.Graph.Canonicalization
 
 open Lean Meta
 
@@ -38,7 +38,6 @@ Builds the class graph from the environment.
 * [A. J. Best. 2023. _Automatically Generalizing Theorems Using
   Typeclasses_.][best2023automaticallyGeneralizingTheorems]
 -/
-
 
 
 /-! ## Edges -/
@@ -245,7 +244,6 @@ public def isWeakeningEdge (s t : Expr) (otherPrems : Array Expr) :
   return otherPrems.all fun p => sArgs.contains p
 
 
-
 /--
 Processes a declaration into an edge for the class graph, if appropriate.
 
@@ -377,8 +375,11 @@ does not contain a single vertex for which the `Subsingleton` verdict would chan
 per-vertex approach is more principled, and should be considered a (low-priority) opportunity for
 future work.
 -/
-def isSubsingletonClass (name : Name) : MetaM Bool := do
-  let r ← withGenericKey name fun app => do
+def isSubsingletonClass (name : Name) (synthesize : Bool := true) : MetaM Bool := do
+  let r ← withGenericKey name fun app body => do
+    -- `withGenericKey` already whnf-reduced `body` for us.
+    if body.isProp then return some true
+    unless synthesize do return some false
     let goal := mkApp (.const ``Subsingleton [← mkFreshLevelMVar]) app
     unless ← isTypeCorrect goal do return none
     match ← (try trySynthInstance goal catch _ => pure .none) with
@@ -421,46 +422,20 @@ rebuilds.
 -/
 public def ClassGraph.assemble (edges : Array ClassEdge) (subHeads : HashSet Name) :
     MetaM ClassGraph := do
-  let env ← getEnv
   -- We derive the set of vertices by just taking all the endpoints of the edges we collected, which
   -- ensures we don't have isolated vertices (not something that we strictly require, but it doesn't
   -- hurt, since we would never be able to weaken a binder matching an isolated vertex anyway, since
   -- we'd have no edge to weaken it through).
   let vertNames := edges.foldl (init := ({} : HashSet Name)) fun s e =>
     (s.insert e.src.name).insert e.tgt.name
-  -- `Prop` subsingletons
-  let propClasses := vertNames.fold (init := ({} : HashSet Name)) fun s name =>
-    match env.find? name with
-    | some const =>
-      match const.type.getForallBody with
-      | .sort .zero => s.insert name
-      | _ => s
-    | none => s
-  -- Non-`Prop` subsingletons (e.g. `Unique α`)
-  let mut subsingletonClasses : HashSet Name := propClasses
-  for h in subHeads do
-    if vertNames.contains h && !propClasses.contains h then
-      if ← isSubsingletonClass h then subsingletonClasses := subsingletonClasses.insert h
+  let mut subsingletonClasses : HashSet Name := {}
+  for name in vertNames do
+    let worthSynthesizing := subHeads.contains name
+    if ← isSubsingletonClass name (synthesize := worthSynthesizing) then
+      subsingletonClasses := subsingletonClasses.insert name
   let digraph := edges.foldl (init := ({} : Digraph Vertex)) fun g e => g.insertEdge e.src e.tgt
   return {
     edges,
     isSubsingleton := fun v => subsingletonClasses.contains v.name,
     condensation := digraph.condense
   }
-
-/--
-Scans the environment's instances into a `ClassGraph`.
--/
-public def ClassGraph.ofEnv : MetaM ClassGraph := do
-  let env ← getEnv
-  -- Only instances can produce edges. We enforce this restriction because the linter targets
-  -- non-explicit binders for weakening, and non-explicit binders are resoved either using instance
-  -- synthesis, or unification with instance synthesis as a fallback. So, when we analyze a
-  -- declaration, we know that the current binder could be resolved, and we need to make sure that
-  -- the weakened version we suggest can also be resolved, which is guaranteed when there's a path
-  -- in the class graph from the stronger to the weaker class, precisely because each edge of the
-  -- class graph corresponds to an instance that instance synthesis can actually make use of.
-  let names := (instanceExtension.getState env).instanceNames.foldl
-    (init := (#[] : Array Name)) fun acc name _ => acc.push name
-  let (edges, subHeads) ← scanInstances names
-  assemble edges subHeads
