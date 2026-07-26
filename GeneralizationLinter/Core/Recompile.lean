@@ -35,9 +35,11 @@ deriving Inhabited, BEq
 public def SourceIntact.all (si : SourceIntact) : Bool := si.binders && si.concl && si.body
 
 /--
-Some weakenings may be genuine weakenings, but require modifications in the value's (i.e., proof
-term's) source code. We "grade" these weakenings as `needsModification`. We grade weakenings that
-don't require any such modification as `.statementAndValueIntact`.
+Some weakenings may be genuine weakenings, but require modifications in the binders', conclusion's,
+or value's (i.e., proof term's) source code. We specify which, if any, of these parts need
+modification in the `parts` argument passed to the `.holds` "grade".
+
+If verification is turned off, the `.unverified` "grade" is assigned instead.
 -/
 public inductive WeakeningGrade where
   | holds (parts : SourceIntact)
@@ -263,6 +265,48 @@ def whereStructInst  := leading_parser
   optional Term.whereDecls  -- dval[2]
 ```
 
+For `whereStructInst`, there's no curly brackets surrounding the structure fields, so there's no
+direct way that we can extract the fields for re-elaboration. So, what we do instead is construct a
+`Term.structInst` syntax tree which simply wraps the `Term.structInstFields` node from the `dval`
+that we were handed with curly brackets. In essence, what we're doing is taking
+
+```
+theorem foo … : … where
+  field₁
+  ⋮
+  fieldₙ
+```
+
+and constructing
+
+```
+{
+  field₁,
+  ⋮
+  fieldₙ
+}
+```
+
+so that we can hand this over for re-elaboration, so that we can check that the weakening doesn't
+mess with any of the fields.
+
+**Note:** Declarations like
+
+```
+theorem foo … : … := …
+where
+  field₁
+  ⋮
+  fieldₙ
+```
+
+get skipped for now. This is because, for these kinds of declarations, Lean elaborates each `fieldᵢ`
+into a separate constant, so we'd have to check each of them recursively. This is certainly doable,
+but we could only find 3 theorems or lemmas in Mathlib v4.32.1 that make use of `where` in this way
+(`LucasLehmer.norm_num_ext.sModNatTR_eq_sModNat`, `TrivSqZeroExt.snd_pow_of_smul_comm`, and
+`RingTheory.Sequence.IsWeaklyRegular.prototype_perm`), so we expect the impact to be relatively
+small. Nonetheless, it's potential future work.
+
 ---
 **Example**
 
@@ -272,17 +316,19 @@ For the example from `peelWrappers?`, `bodyTermOfDeclVal?` returns the following
 `ident trivial`
 ```
 -/
-public def bodyTermOfDeclVal? (dval : Syntax) (wrapped : Bool) : TermElabM (Option Syntax) := do
+public def bodyTermOfDeclVal? (dval : Syntax) : TermElabM (Option Syntax) := do
   if dval.getKind == ``Parser.Command.declValSimple then
     return some dval[1]
   else if dval.getKind == ``Parser.Command.whereStructInst then
-    -- We don't support wrapped structs, because (#TODO: why?).
-    if wrapped then return none
-    -- Reprint struct, then parse the result.
-    match Parser.runParserCategory (← getEnv) `term
-      ("{ " ++ (dval[1].reprint.getD "") ++ " }") with
-    | .ok t => return some t
-    | .error _ => return none
+    return some <| mkNode ``Parser.Term.structInst #[
+      mkAtom "{",
+      mkNullNode,
+      dval[1], -- Parser.Term.structInstFields
+      mkNode ``Parser.Term.optEllipsis #[],
+      mkNullNode,
+      mkAtom "}"
+    ]
+  -- We skip `Parser.Term.whereDecls`; see implementation notes.
   else return none
 
 /--
@@ -428,22 +474,46 @@ public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List N
     attempt (some depth)
   catch _ => return none
 
+
+/--
+Check that re-elaborated conclusion is definitionally equal to the old conclusion.
+
+---
+**Implementation notes**
+
+`forallTelescope W` strips every `∀` from `W`, even ones that may actually belong to the
+conclusion of `W`, which we don't want. So we consult `conclStx` and check how many leading `∀`s it
+has, and re-abstract precisely that number of the telescoped `W`'s trailing binders.
+
+For example, if the signature were `[Group α] (a b : α) : ∀ (c : α), a = b → b = c → a = c`, then
+`args` would be `#[inst, a, b, c, t₁, t₂]`, where `inst : Group α`, `t₁ : a = b`, and `t₂ : b = c`
+would in truth be dynamically-generated hygienic binder names, and `shortConcl` would be `a = c`.
+Meanwhile, `conclStx = ‹∀ (c : α), a = b → b = c → a = c›`, so it can tell us that the "real"
+conclusion actually has 3 leading `∀`s (corresponding to `c`, `t₁`, and `t₂`).
+
+Now, let's pretend that `Group α` got weakened to `Monoid a`. Then `newConcl = ‹∀ (c : α), a = b → b
+= c → a = c›` (note that we're using the `‹›` brackets are being used both for `Syntax` and
+`Expr`s). We now want to check that `newConcl` matches the old conclusion, but only have the
+`shortConcl` version of the old conclusion. Hence, we extract the last 3 arguments (we know it's 3
+because that's how many leading `∀`s `conclStx` has) from `args` (which were telescoped from the old
+signature) and build a forall-expression, using them as the arguments and `shortConcl` as the
+conclusion, which yields `∀ (c : α) (t₁ : a = b) (t₂ : b = c), a = c`. We then check whether this
+"full" old conclusion `Expr` is definitionally equal to `newConcl`, and receive a verdict that is
+informative to us, and not simply `false` because of a mismatch in `∀`-arity of the expressions.
+-/
 public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Name := []) :
     TermElabM Bool :=
   suppressingDiagnostics do
   try
     withLevelNames ((← getLevelNames) ++ levelNames) do
-      Meta.forallTelescope W fun ys concl => do
+      Meta.forallTelescope W fun args shortConcl => do
         let newConcl ← withoutErrToSorry (elabTermAndSynthesize conclStx none)
-        -- `forallTelescope W` strips every `∀` from `W`, even ones that may actually belong to the
-        -- conclusion of `W`, which we don't want. So we consult `conclStx` and check how many
-        -- leading `∀`s it has, and re-abstract precisely that number of the telescoped `W`'s
-        -- trailing binders. #TODO
+        -- See implementation notes.
         let rec foralls : Expr → Nat
           | .forallE _ _ b _ => foralls b + 1
           | _ => 0
-        let k := min (foralls newConcl) ys.size
-        Meta.isDefEq newConcl (← Meta.mkForallFVars (ys.extract (ys.size - k) ys.size) concl)
+        let k := min (foralls newConcl) args.size
+        Meta.isDefEq newConcl (← Meta.mkForallFVars (args.extract (args.size - k) args.size) shortConcl)
     catch e =>
       -- We don't want a timeout here to lead to a claim that "the conclusion would have to be
       -- modified" (we don't know whether that's true or not at this point), but rather just to
@@ -451,38 +521,97 @@ public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Na
       if e.isRuntime then throw e else return false
 
 /--
-#TODO
+Basically just `recompiledAgainst? ∘ weakenedStatementType`; if the given declaration's _value_
+post-weakenings re-elaborates and type-checks against the original conclusion, return said value,
+otherwise return `none`.
 -/
 public def recompiledVal? (const : ConstantInfo) (src : DeclSource) (ws : Array (Nat × Array Vertex)) :
     TermElabM (Option (Expr × Expr)) := do
   let some W ← weakenedStatementType const ws | return none
   return (← recompiledAgainst? W src const.levelParams).map (W, ·)
 
-/-- Wrapper around `recompiledVal?`; returns `true` iff #TODO -/
+/-- Wrapper around `recompiledVal?`; returns `true` iff `recompiledVal?` succeeded. -/
 public def recompileHolds (const : ConstantInfo) (src : DeclSource) (ws : Array (Nat × Array Vertex)) :
     TermElabM Bool :=
   return (← recompiledVal? const src ws).isSome
 
 /--
-Does any of the declaration's binders, _as source code_ (`Syntax`), mention the binder `name`?
+Does any binder in `binders`, _as source code_ (`Syntax`), mention the binder `name`?
 
 ---
 **Examples**
 
+Suppose we have
+
 ```
-binderSourceNamesBinder ‹[inst : Ring R] [AddCommMonoid M] [Module R M]› `inst = false
+theorem foo {R M : Type*}
+  [inst₁ : Ring R]
+  [isnt₂ : AddCommMonoid M]
+  [inst₃ : @Module R M (@Ring.toSemiring R inst₁) inst₂] : … := …
+```
+
+The typical use case for `binderSourceNamesBinder` would be checking whether weakening `[inst₁ :
+Ring R]` to `[inst₁ : Semiring R]` would require the user to modify `foo`'s other binders in any
+way. To check this, we would call ``binderSourceNamesBinder #[‹[isnt₂ : AddCommMonoid M]›, ‹[inst₃ :
+@Module R M (@Ring.toSemiring R inst₁) inst₂]›] `inst₁`` and get `true`.
+
+Had we instead had the following instead
+
+```
+theorem foo {R M : Type*}
+  [inst₁ : Ring R]
+  [isnt₂ : AddCommMonoid M]
+  [inst₃ : Module R M] : … := …
+```
+
+then we'd have called ``binderSourceNamesBinder #[‹[isnt₂ : AddCommMonoid M]›, ‹[inst₃ : Module R
+M]›] `inst₁`` and gotten `false`.
+
+---
+**Implementation notes**
+
+For reference:
+
+```
+[inst₃ : @Module R M (@Ring.toSemiring R inst₁) inst₂]    [Module R M]
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^
+`Lean.Parser.Term.instBinder`                             `Lean.Parser.Term.instBinder`
+├─ [0] `atom "["`                                         ├─ [0] `atom "["`
+├─ [1] `null`                                             ├─ [1] `null`
+│  ├─ [0] `ident inst₃`                                   ├─ [2] `Lean.Parser.Term.app`
+│  └─ [1] `atom ":"`                                      │  ├─ [0] `ident Module`
+├─ [2] `Lean.Parser.Term.app`                             │  └─ [1] `null`
+│  ├─ [0] `Lean.Parser.Term.explicit`                     │     ├─ [0] `ident R`
+│  │  ├─ [0] `atom "@"`                                   │     └─ [1] `ident M`
+│  │  └─ [1] `ident Module`                               └─ [3] `atom "]"`
+│  └─ [1] `null`
+│     ├─ [0] `ident R`
+│     ├─ [1] `ident M`
+│     ├─ [2] `Lean.Parser.Term.paren`
+│     │  ├─ [0] `Lean.Parser.Term.hygienicLParen`
+│     │  │  ├─ [0] `atom "("`
+│     │  │  └─ [1] `hygieneInfo`
+│     │  │     └─ [0] `ident [anonymous]`
+│     │  ├─ [1] `Lean.Parser.Term.app`
+│     │  │  ├─ [0] `Lean.Parser.Term.explicit`
+│     │  │  │  ├─ [0] `atom "@"`
+│     │  │  │  └─ [1] `ident Ring.toSemiring`
+│     │  │  └─ `null`
+│     │  │     ├─ [0] `ident R`
+│     │  │     └─ [1] `ident inst₁`
+│     │  └─ [2] `atom ")"`
+│     └─ [3] `ident inst₂`
+└─ [3] `atom "]"`
 ```
 -/
 public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool :=
   binders.any fun b =>
     let args := b.getArgs
+    -- For many (most?) binders, `searched` is just `#[b[2]]` (see implementation note above).
     let searched := if args.size ≥ 3 then args.extract 2 args.size else args
-    searched.any fun arg => (arg.find? fun s =>
-      (s.isIdent && !name.hasMacroScopes && !name.isAnonymous &&
-        s.getId.eraseMacroScopes.getRoot == name) ||
-      (s.isIdent && s.getId == ``inferInstance) ||
-      (match s with | .atom _ v => v == "‹" | _ => false)
-    ).isSome
+    -- See if we can find any identifier matching `name`.
+    searched.any fun arg => (arg.find? fun s => (s.isIdent && !name.hasMacroScopes &&
+        !name.isAnonymous && s.getId.eraseMacroScopes.getRoot == name)).isSome
 
 /--
 If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just

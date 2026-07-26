@@ -31,14 +31,8 @@ which is the process we refer to as ***canonicalization***, and back, which we r
 * `canonArg` canonicalizes a single argument. For example, for `Module R M`, this means `R` and `M`
   become `bvar 0` and `bvar 1`. For `Pow α ℕ`, this means `α` becomes `bvar 0` and `ℕ` remains `ℕ`.
 * `toKey` canonicalizes a class application into a `Key` that we query the class graph with.
-* `reifyClass` takes a class name and some frame arguments, and reifies them into a proper class
+* `reify` takes a class name and some frame arguments, and reifies them into a proper class
   application.
-* `elabEntry`
-
-
-Given an `n`-ary class `C`, ``keySlots `C`` returns `#[b₁, …, bₙ]`, where `bᵢ : Bool` is `false` if
-
-finds a  which "slots" (parameters) are required
 -/
 
 open Lean Meta GeneralizationLinter
@@ -318,9 +312,9 @@ Given an `Expr` of a class application, canonicalize it into a `Key`.
   reduces to `IsNoetherian R R`, would have ```Vertex.name := ``IsNoetherian``` and `Vertex.pattern
   := #[#0, #0]`.
 * For a family class binder like `∀ prefix, C args`, the body (`C args`) determines the `Vertex`
-  fields, while the prefix is used to abstract the
-
-  #TODO: finish this docstring
+  fields, while the family index in the prefix is abstracted to a bvar. So, for example, for `[∀ i :
+  ι, Monoid (f i)]`, where `f : ι → Type*` is some free variable, we'd have ``name := `Monoid``,
+  `pattern := #[.bvar 0]`, `subst := #[f (.bvar 0)]`, and `familyArity := 1`.
 
 ---
 **Examples**
@@ -360,6 +354,17 @@ toKey ‹@IsWellFounded (@Submodule α α inst₁ inst₂ inst₃) β› = {
   subst := #[α, β]
   familyArity := 0,
 }
+
+-- Let `f` be a free variable with `f : ι → Type*`.
+toKey ‹∀ i : ι, Monoid (f i)› = {
+  -- `Vertex` fields
+  name := `Monoid,
+  levels := .polymorphic
+  pattern := #[.bvar 0],
+  -- `Key` fields
+  subst := #[f (.bvar 0)]
+  familyArity := 1,
+}
 ```
 
 Note how the class applications `Small (Subtype p)` and `IsWellFounded (Submodule α α) β` get
@@ -397,7 +402,21 @@ where
 /-! ## Reification -/
 
 /--
-#TODO
+Returns pair consisting of:
+
+1.  A constant named `name` at fresh level metavariables, and
+2.  the constant's type.
+
+Returns `none` if `name` isn't in the environment.
+
+---
+**Implementation notes**
+
+The fresh universe level metavariables is what enables us to reify a universe-polymorphic class
+without having to pin its levels prematurely. Note that class graph vertices don't store universe
+levels, so we have to add levels to `name` in some way anyhow, and we're just choosing not to give
+it arbitrarily pinned levels, but rather giving it fresh level metavariables and letting downstream
+unification pin them if and where necessary.
 -/
 def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
   let some const := (← getEnv).find? name | return none
@@ -473,9 +492,10 @@ public partial def elabPatternEntry (e : Expr) : MetaM (Option Expr) := do
 
 /--
 The inverse of `toKey` for non-family class binders. Reifies the class `name` by instantiating the
-`pattern` of its key with the concrete values provided by `subst`, each elaborated #TODO, and then
-inferring the non-key-slots of `name`. Returns `none` if `pattern` needs more values than `subst`
-provides, or if elaboration or inference failed at any point.
+`pattern` of its key with the concrete values provided by `subst`, each elaborated against the
+corresponding slot's expected type, and then inferring the non-key-slots of `name`. Returns `none`
+if `pattern` needs more values than `subst` provides, or if elaboration or inference failed at any
+point.
 -/
 public def reify (name : Name) (pattern subst : Array Expr) : MetaM (Option Expr) := do
   if pattern.any (·.looseBVarRange > subst.size) then return none

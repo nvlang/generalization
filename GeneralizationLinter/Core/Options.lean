@@ -115,9 +115,7 @@ public register_option generalizeTypeclasses.split : String := {
 public register_option generalizeTypeclasses.targetImplicit : Bool := {
   defValue := true,
   descr := "controls whether implicit and strict implicit binders should also be scanned for
-    potential weakenings. Instance implicit binders are always scanned if the linter is active.
-    Note that, unlike for instance implicit binders, the linter does not provide a code action for
-    suggested weakenings of implicit or strict implicit binders."
+    potential weakenings. Instance implicit binders are always scanned if the linter is active."
 }
 
 public register_option generalizeTypeclasses.perCandidateHeartbeats : Nat := {

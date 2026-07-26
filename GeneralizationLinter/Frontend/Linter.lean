@@ -21,159 +21,6 @@ namespace GeneralizationLinter.Frontend
 /-!
 # Linter
 
-
-
-
-## Main definitions
-
-* `linter`: This is the structure that gets registered via `initialize addLinter linter`, and whose
-  `linter.run` function runs for every
-
--/
-
-/--
-Returns true if `type` has ≥1 binders that are targeted by the typeclass linter (under the given
-configuration).
--/
-def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
-  let opts ← getOptions
-  let implicit := opts.getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
-  let rec go : Expr → MetaM Bool
-    | .forallE _ binderType body binderInfo => do
-      let targeted := binderInfo.isInstImplicit ||
-        (implicit && binderInfo matches .implicit | .strictImplicit)
-      if targeted && (← isClass? binderType).isSome then return true else go body
-    | _ => return false
-  go type
-
-/--
-Given a weakening candidate `c` for a declaration with constant info `const`, returns a pair of
-strings, the first string indicating what the existing binder looks like (e.g., `Group G`)
--/
-def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
-  targetedBinderTelescope const.type fun lds _ => do
-    let old? := lds[candidate.binder.idx]?
-    -- Targeted binder (unbracketed)
-    let dispUnbracketed ← match old? with
-      | some ld => pure (toString (← Meta.ppExpr ld.type))
-      -- ↓ Should be unreachable.
-      | none => pure (
-          if candidate.binder.origName.isAnonymous then s!"⟨binder {candidate.binder.idx}⟩"
-          else toString candidate.binder.origName)
-    -- Targeted binder (bracketed)
-    let disp := match candidate.binder.binderInfo with
-      | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
-      | .implicit => "{" ++ dispUnbracketed ++ "}"
-      | _ => s!"[{dispUnbracketed}]"
-    -- Render a
-    let render (t : Vertex) : MetaM String := do
-      let some ld := old? | return toString t.name
-      let some e ← replaceBinderType ld.type t | return toString t.name
-      return toString (← Meta.ppExpr e)
-    let target ← match candidate.shape with
-      | .drop => pure "removed (dropped)"
-      | .weaken weakerVertex => pure s!"weakened to `{← render weakerVertex}`"
-      | .split weakerVertices => pure ("split into " ++
-          ", ".intercalate (← weakerVertices.toList.mapM fun t => return s!"`{← render t}`"))
-    return (disp, target)
-
-
-/-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
-def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
-    TermElabM Unit :=
-  withOptions (fun _ => opts) <|
-    withTheReader Core.Context (fun c => { c with maxHeartbeats := heartbeats }) <|
-      tryCatchRuntimeEx x (fun _ => pure ())
-
-
-
-/-- Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied. -/
-def wrapperEffectiveOptions? (wrappers : Array Syntax) :
-    CommandElabM (Option Options) := do
-  -- `elabSetOption` modifies infotrees of `CommandElabM`, so we snapshot `InfoState` here and roll
-  -- back to it after setting the options.
-  let savedInfo ← getInfoState
-  let effectiveOpts ← foldSetOptionWrappers? wrappers (← getOptions)
-    -- Callback establishing how to apply the `set_option` wrapper `w` to `opts : Options`.
-    fun opts w => try
-        -- We want to accumulate towards an `opts'` map that contains all prior `set_option`
-        -- wrappers in `wrappers` already, on top of whatever options `CommandElabM` had before.
-        let (opts', _) ← withScope
-          -- `scope` is the (currently active) scope of `CommandElabM`, and `{ scope with opts }` is
-          -- just that scope with `opts` applied to it, which is precisely the transient scope with
-          -- which we want to run `elabSetOption`.
-          (fun scope => { scope with opts })
-          (elabSetOption
-              (w.getArg 1)  -- option identifier
-              (w.getArg 3)) -- option value
-        pure (some opts')   -- return `opts` with `w` applied to it.
-      catch _ => pure none
-  -- Roll back `InfoState` so that modifications by `elabSetOption` don't mess with it.
-  setInfoState savedInfo
-  return effectiveOpts
-
-/--
-Run the typeclass linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
-whose value is described by syntax tree `bodyStx`.
--/
-def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
-    (src : DeclSource) (declName : Name)
-    (omitCaveat : Bool := false) : TermElabM Unit := do
-  let caveat := if omitCaveat then
-    " This declaration's scope has one or more variables omitted from it, which means that the \
-      suggested weakening may require the declaration or its value to be modified, or the omit \
-      command to be removed, to be valid." else ""
-  for gw in ← gradedWeakenings cfg graph const src do
-    let c := gw.candidate
-    let (disp, target) ← describeCandidate const c
-    let msg := match gw.grade with
-      | .holds { binders, body, concl } =>
-        let must := (if !concl then ["its conclusion"] else []) ++
-          (if !body then ["its proof"] else [])
-        let mustPart := if must.isEmpty then "" else
-          s!", but {" and ".intercalate must} would have to be modified"
-        let mightPart := if binders then "" else
-          if must.isEmpty then ", but its binders might have to be modified"
-          else ", and its binders might have to be as well"
-        m!"the `{disp}` hypothesis of `{declName}` can be \
-          {target}{mustPart}{mightPart}.{caveat}"
-      -- For experiments only.
-      | .unverified =>
-        m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {target}."
-    logLint linter.generalizeTypeclasses (← getRef) msg
-
-/--
-Run the universe linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
-whose value is described by syntax tree `bodyStx`.
--/
-def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
-    (declCmd bodyStx : Syntax) (wrappers : Array Syntax) (declName : Name) : TermElabM Unit := do
-  let some declSig := declCmd.find? (·.isOfKind ``Parser.Command.declSig) | return
-  let mut failed : Array PinnedBinder := #[]
-  for b in ← withHeartbeatBudget cfg.perCandidateHeartbeats #[] (pinnedTypeBinders const.type) do
-    if (← withHeartbeatBudget cfg.perCandidateHeartbeats none
-        (universeGeneralization? const declSig bodyStx b wrappers)).isSome then
-      let cur := if b.level == 1 then "Type" else s!"Type {b.level - 1}"
-      logLint linter.generalizeUniverses (← getRef)
-        -- #TODO: Is this the right message format? I'm confused.
-        m!"the `({b.name} : {cur})` binder of `{declName}` can be universe-polymorphic"
-    else
-      failed := failed.push b
-  for lvl in (failed.map (·.level)).toList.eraseDups do
-    let grp := failed.filter (·.level == lvl)
-    if let some (sub, _) ← sharedSubsetLadder? grp (fun sub =>
-        withHeartbeatBudget cfg.perCandidateHeartbeats none
-          (universeGeneralizationsBlocks? const declSig bodyStx #[sub] wrappers)) then
-      let names := ", ".intercalate (sub.toList.map fun b => s!"`{b.name}`")
-      logLint linter.generalizeUniverses (← getRef)
-        m!"the binders {names} of `{declName}` can be jointly universe-polymorphic at one shared level."
-
-
-/--
-
----
-**Example**
-
 Suppose a file contains the following commands:
 
 ```
@@ -258,6 +105,161 @@ lemma something ‹binders› : ‹concl› := ‹value›
 So `linter` has access to the syntax tree of the user's source code pre-elaboration (and thus also
 pre-expansion), while the command state within which `linter` runs also provides it with access to
 the fully elaborated declaration.
+
+## Main definitions
+
+* `linter`: This is the structure that gets registered via `initialize addLinter linter`, and whose
+  `linter.run` function runs for every top-level command.
+* `lintTypeclassesFor`: The function that computes, verifies, and emits the typeclass weakening
+  suggestions.
+* `lintUniversesFor`: The function that checks, verifies, and emits universe generalization
+  suggestions.
+-/
+
+/--
+Returns true if `type` has ≥1 binders that are targeted by the typeclass linter (under the given
+configuration).
+-/
+def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
+  let opts ← getOptions
+  let implicit := opts.getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
+  let rec go : Expr → MetaM Bool
+    | .forallE _ binderType body binderInfo => do
+      let targeted := binderInfo.isInstImplicit ||
+        (implicit && binderInfo matches .implicit | .strictImplicit)
+      if targeted && (← isClass? binderType).isSome then return true else go body
+    | _ => return false
+  go type
+
+/--
+Given a weakening candidate `c` for a declaration with constant info `const`, returns a pair of
+strings, the first string indicating what the existing binder looks like (e.g., `Group G`)
+-/
+def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
+  targetedBinderTelescope const.type fun lds _ => do
+    let old? := lds[candidate.binder.idx]?
+    -- Targeted binder (unbracketed)
+    let dispUnbracketed ← match old? with
+      | some ld => pure (toString (← Meta.ppExpr ld.type))
+      -- ↓ Should be unreachable.
+      | none => pure (
+          if candidate.binder.origName.isAnonymous then s!"⟨binder {candidate.binder.idx}⟩"
+          else toString candidate.binder.origName)
+    -- Targeted binder (bracketed)
+    let disp := match candidate.binder.binderInfo with
+      | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
+      | .implicit => "{" ++ dispUnbracketed ++ "}"
+      | _ => s!"[{dispUnbracketed}]"
+    -- Render a
+    let render (t : Vertex) : MetaM String := do
+      let some ld := old? | return toString t.name
+      let some e ← replaceBinderType ld.type t | return toString t.name
+      return toString (← Meta.ppExpr e)
+    let target ← match candidate.shape with
+      | .drop => pure "removed (dropped)"
+      | .weaken weakerVertex => pure s!"weakened to `{← render weakerVertex}`"
+      | .split weakerVertices => pure ("split into " ++
+          ", ".intercalate (← weakerVertices.toList.mapM fun t => return s!"`{← render t}`"))
+    return (disp, target)
+
+
+/-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
+def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
+    TermElabM Unit :=
+  withOptions (fun _ => opts) <|
+    withTheReader Core.Context (fun c => { c with maxHeartbeats := heartbeats }) <|
+      tryCatchRuntimeEx x (fun _ => pure ())
+
+
+/-- Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied. -/
+def wrapperEffectiveOptions? (wrappers : Array Syntax) :
+    CommandElabM (Option Options) := do
+  -- `elabSetOption` modifies infotrees of `CommandElabM`, so we snapshot `InfoState` here and roll
+  -- back to it after setting the options.
+  let savedInfo ← getInfoState
+  let effectiveOpts ← foldSetOptionWrappers? wrappers (← getOptions)
+    -- Callback establishing how to apply the `set_option` wrapper `w` to `opts : Options`.
+    fun opts w => try
+        -- We want to accumulate towards an `opts'` map that contains all prior `set_option`
+        -- wrappers in `wrappers` already, on top of whatever options `CommandElabM` had before.
+        let (opts', _) ← withScope
+          -- `scope` is the (currently active) scope of `CommandElabM`, and `{ scope with opts }` is
+          -- just that scope with `opts` applied to it, which is precisely the transient scope with
+          -- which we want to run `elabSetOption`.
+          (fun scope => { scope with opts })
+          (elabSetOption
+              (w.getArg 1)  -- option identifier
+              (w.getArg 3)) -- option value
+        pure (some opts')   -- return `opts` with `w` applied to it.
+      catch _ => pure none
+  -- Roll back `InfoState` so that modifications by `elabSetOption` don't mess with it.
+  setInfoState savedInfo
+  return effectiveOpts
+
+
+/--
+Run the typeclass linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
+whose value is described by syntax tree `bodyStx`.
+-/
+def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
+    (src : DeclSource) (declName : Name)
+    (omitCaveat : Bool := false) : TermElabM Unit := do
+  let caveat := if omitCaveat then
+    " This declaration's scope has one or more variables omitted from it, which means that the \
+      suggested weakening may require the declaration or its value to be modified, or the omit \
+      command to be removed, to be valid." else ""
+  for gw in ← gradedWeakenings cfg graph const src do
+    let c := gw.candidate
+    let (disp, target) ← describeCandidate const c
+    let msg := match gw.grade with
+      | .holds { binders, body, concl } =>
+        let must := (if !concl then ["its conclusion"] else []) ++
+          (if !body then ["its proof"] else [])
+        let mustPart := if must.isEmpty then "" else
+          s!", but {" and ".intercalate must} would have to be modified"
+        let mightPart := if binders then "" else
+          if must.isEmpty then ", but its binders might have to be modified"
+          else ", and its binders might have to be as well"
+        m!"the `{disp}` hypothesis of `{declName}` can be \
+          {target}{mustPart}{mightPart}.{caveat}"
+      -- For experiments only.
+      | .unverified =>
+        m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {target}."
+    logLint linter.generalizeTypeclasses (← getRef) msg
+
+/--
+Run the universe linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
+whose value is described by syntax tree `bodyStx`.
+-/
+def lintUniversesFor (cfg : LinterConfig) (const : ConstantInfo)
+    (declCmd bodyStx : Syntax) (wrappers : Array Syntax) (declName : Name) : TermElabM Unit := do
+  let some declSig := declCmd.find? (·.isOfKind ``Parser.Command.declSig) | return
+  let mut failed : Array PinnedBinder := #[]
+  for b in ← withHeartbeatBudget cfg.perCandidateHeartbeats #[] (pinnedTypeBinders const.type) do
+    if (← withHeartbeatBudget cfg.perCandidateHeartbeats none
+        (universeGeneralization? const declSig bodyStx b wrappers)).isSome then
+      let cur := if b.level == 1 then "Type" else s!"Type {b.level - 1}"
+      logLint linter.generalizeUniverses (← getRef)
+        m!"the `({b.name} : {cur})` binder of `{declName}` can be universe-polymorphic"
+    else
+      failed := failed.push b
+  for lvl in (failed.map (·.level)).toList.eraseDups do
+    let grp := failed.filter (·.level == lvl)
+    if let some (sub, _) ← sharedSubsetLadder? grp (fun sub =>
+        withHeartbeatBudget cfg.perCandidateHeartbeats none
+          (universeGeneralizationsBlocks? const declSig bodyStx #[sub] wrappers)) then
+      let names := ", ".intercalate (sub.toList.map fun b => s!"`{b.name}`")
+      logLint linter.generalizeUniverses (← getRef)
+        m!"the binders {names} of `{declName}` can be jointly universe-polymorphic at one shared level."
+
+
+/--
+This is the structure that gets registered via `initialize addLinter linter`, and whose `linter.run`
+function runs for every top-level command.
+
+For each command that `linter.run` is called on, it figures out whether it should run
+`lintTypeclassesFor` or `lintUniversesFor`, and, if so, sets up the `DeclSource` record that they'll
+need and, in the case of `lintTypeclassesFor`, builds (or fetches from cache) the typeclass graph.
 -/
 public def linter : Linter where
   -- `withSetOptionIn` peels off leading `set_option … in` commands. However, in our docstring
@@ -289,13 +291,15 @@ public def linter : Linter where
         -- Get body `Syntax` _without_ wrappers.
         let some rawBody ← (
             -- Because `linter.run` is called once for each top-level command, if `thms.length ≥ 2`,
-            -- this means that we're dealing with (#TODO: with what?), so we bail.
+            -- this means that we're dealing with a `mutual` block or a macro expanding to several
+            -- theorems (note that this does not include declarations with the `@[to_additive]`
+            -- attribute, because the automatic transportation it does happens at a later stage of
+            -- elaboration, during which the linter no longer runs). #TODO: Make sure this is
+            -- accurate.
             if declVals.size == 1 && thms.length == 1 then
-              bodyTermOfDeclVal? declVals[0]! (wrapped := !wrappers.isEmpty)
+              bodyTermOfDeclVal? declVals[0]!
             else pure none) | return
-        --
         let bodyStx := rewrapTerm wrappers rawBody
-        -- #TODO
         let declSig? := declCmd.find? (·.isOfKind ``Parser.Command.declSig)
         let conclStx := declSig?.bind fun declSig' =>
           if declSig'[1].isOfKind ``Parser.Term.typeSpec then some (rewrapTerm wrappers declSig'[1][1])

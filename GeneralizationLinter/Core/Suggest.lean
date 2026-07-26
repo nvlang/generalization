@@ -193,7 +193,8 @@ alternatives.
 def sccDemotedHeads : List Name := [`NSMul, `ZSMul, `NPow, `ZPow, `OfNat, `Trans]
 
 /--
-#TODO
+Deterministically picks a vertex within a given SCC, avoiding any vertex whose `Vertex.name` is in
+`sccDemotedHeads`.
 -/
 def sccRepresentative (scc : Array Vertex) : Option Vertex :=
   let pick (vertices : Array Vertex) : Option Vertex := vertices.foldl (init := none) fun best v =>
@@ -219,7 +220,7 @@ def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vert
   | _ => none -- `mca` is empty or has size ≥2
   -- #TODO (low priority): If `mca` has size ≥2, it means there's multiple incomparable minimal
   -- common ancestors, each of which single-handedly satisfies all requirements (see
-  -- `minCommonAncestors`'s docstring for an example). Instead of dropping them all and pretend
+  -- `minCommonAncestors`'s docstring for an example). Instead of dropping them all and pretending
   -- there's no possible weakenings, we could try to simply present them as multiple viable options
   -- (after verifying them, of course), or even just pick one ancestor from `mca` according to some
   -- deterministic procedure and just go with that. However, this shouldn't happen all that often,
@@ -277,7 +278,10 @@ def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts 
     | none, some m => some #[m]
     | none, none => none
 
-/-- #TODO -/
+/--
+Return a (possibly empty) array of candidate weakenings for any of the targeted binders `binders`
+such that the requirements `reqs` are still satisfied.
+-/
 public def candidates (graph : ClassGraph) (binders : Array TargetedBinder)
     (reqs : Array Requirement) (cfg : LinterConfig := {}) (includeSubsumers : Bool := true) :
     Array Candidate := Id.run do
