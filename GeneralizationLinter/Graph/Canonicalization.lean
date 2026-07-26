@@ -5,11 +5,8 @@ Authors: Noah Lang
 -/
 module
 
-public import Lean.Expr
-public import Lean.Environment
 public import Lean.Meta.Basic
 public import GeneralizationLinter.Graph.Vertex
-import Lean.Meta.SynthInstance
 import Lean.Meta.AppBuilder
 
 open Lean Meta

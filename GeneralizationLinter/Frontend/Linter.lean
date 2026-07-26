@@ -6,10 +6,13 @@ Authors: Noah Lang
 module
 
 public import Lean.Linter.Basic
-public import Mathlib.Lean.Elab.InfoTree
-public import GeneralizationLinter.Graph.GraphCache
-public import GeneralizationLinter.Analysis.Options
-public import GeneralizationLinter.Analysis.Verify
+import Mathlib.Lean.Elab.InfoTree
+
+import GeneralizationLinter.Graph.GraphCache
+import GeneralizationLinter.Analysis.Options
+import GeneralizationLinter.Analysis.Replay
+import GeneralizationLinter.Analysis.ReSynth
+import GeneralizationLinter.Analysis.Verify
 
 open Lean Meta Elab Command Linter Term
 open GeneralizationLinter

@@ -5,7 +5,13 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Analysis.Candidates
+public import Lean.Meta.Basic
+import Lean.Meta.SynthInstance
+
+public import GeneralizationLinter.Graph.Vertex
+import GeneralizationLinter.Analysis.Collect
+import GeneralizationLinter.Graph.ClassGraph
+
 open Lean Meta
 open Std (HashMap HashSet)
 

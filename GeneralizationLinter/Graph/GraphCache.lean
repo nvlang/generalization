@@ -5,10 +5,10 @@ Authors: Noah Lang
 -/
 module
 
-public import Lean.Expr
-public import Lean.Environment
-public import Lean.Meta.Basic
-public import Lean.Meta.FunInfo
+import Lean.Meta.Basic
+import Lean.Meta.Instances
+import Lean.Meta.FunInfo
+
 public import GeneralizationLinter.Graph.ClassGraph
 
 namespace GeneralizationLinter

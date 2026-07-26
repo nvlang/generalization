@@ -4,9 +4,10 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Noah Lang
 -/
 module
-
-public import GeneralizationLinter.Graph.Vertex
+public import GeneralizationLinter.Graph.ClassGraph
 public import GeneralizationLinter.Analysis.Collect
+public import GeneralizationLinter.Analysis.Options
+
 open Lean Meta
 
 namespace GeneralizationLinter

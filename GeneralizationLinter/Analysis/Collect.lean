@@ -6,8 +6,8 @@ Authors: Noah Lang
 module
 
 public import GeneralizationLinter.Graph.Canonicalization
-public import GeneralizationLinter.Graph.ClassGraph
-public import GeneralizationLinter.Analysis.Options
+import GeneralizationLinter.Graph.ClassGraph
+import GeneralizationLinter.Analysis.Options
 open Lean Meta
 open Std (HashMap)
 

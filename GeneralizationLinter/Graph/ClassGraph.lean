@@ -5,12 +5,13 @@ Authors: Noah Lang
 -/
 module
 
-public import Lean.Expr
-public import Lean.Environment
-public import Lean.Meta
+public import Lean.Meta.Basic
+import Lean.Meta.FunInfo
+import Lean.Meta.SynthInstance
+
 public import GeneralizationLinter.Graph.Digraph
 public import GeneralizationLinter.Graph.Vertex
-public import GeneralizationLinter.Graph.Canonicalization
+import GeneralizationLinter.Graph.Canonicalization
 
 open Lean Meta
 

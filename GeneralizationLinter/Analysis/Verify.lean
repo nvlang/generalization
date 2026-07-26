@@ -5,9 +5,8 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Analysis.Replay
-public import GeneralizationLinter.Analysis.ReSynth
-public import Lean.Elab.Term
+import GeneralizationLinter.Analysis.ReSynth
+public import GeneralizationLinter.Analysis.Candidates
 
 open Lean Meta Elab Term
 

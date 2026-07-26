@@ -5,8 +5,8 @@ Authors: Noah Lang
 -/
 module
 
-public import GeneralizationLinter.Graph.Digraph
 public import Lean.Data.Options
+public import GeneralizationLinter.Graph.Digraph
 
 namespace GeneralizationLinter
 open GeneralizationLinter.Digraph.Condensation (AbsencePolicy)
