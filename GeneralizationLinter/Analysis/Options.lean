@@ -121,7 +121,9 @@ public register_option generalizeTypeclasses.targetImplicit : Bool := {
 
 public register_option generalizeTypeclasses.perCandidateHeartbeats : Nat := {
   defValue := 4_000_000,
-  descr := "per-candidate heartbeat budget for the typeclass linter's analysis."
+  descr := "per-candidate heartbeat budget for the linter's analysis. If n is the number of targeted
+    binders in a given declaration and m is the ambient maxHeartbeats, then, for each declaration,
+    the linter will take at most (n + 2) × min(perCandidateHeartbeats, m) heartbeats."
 }
 
 public register_option generalizeTypeclasses.acceptOmits : Bool := {
