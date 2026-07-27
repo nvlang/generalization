@@ -309,8 +309,8 @@ statement.
   binders-and-requirements collection pipeline.
 * The fact that each `Requirement` is associated with a specific `TargetedBinder` is technically an
   unnecessary restriction on the kinds of weakenings the linter can suggest, but it simplifies the
-  search for weakenings from general abduction to computing some meets, and we find that it doesn't
-  reduce the quality of the suggestions too much.
+  search for weakenings from general abduction to computing some least upper bounds, and we find
+  that it doesn't reduce the quality of the suggestions too much.
 
 ---
 **Example**

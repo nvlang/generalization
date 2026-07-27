@@ -43,7 +43,7 @@ public def Candidate.replacements (c : Candidate) : Array Vertex :=
 
 
 /-- Everything `suggest` needs to produce its answers, compiled into one structure. -/
-private structure MeetContext where
+private structure LUBContext where
   /-- Class graph. -/
   graph : ClassGraph
   /-- See `AbsencePolicy`. -/
@@ -55,7 +55,7 @@ private structure MeetContext where
 
 
 /-- Returns `true` iff `u` reaches `v` in `ctx.graph`. -/
-def MeetContext.reachesV (ctx : MeetContext) (u v : Vertex) : Bool :=
+def LUBContext.reachesV (ctx : LUBContext) (u v : Vertex) : Bool :=
   (u.matchingVertices ctx.includeSubsumers).any fun u' =>
     (v.matchingVertices ctx.includeSubsumers).any fun v' => ctx.graph.condensation.reaches u' v'
 
@@ -121,7 +121,7 @@ where
 
 
 /-- Return the data descendants of `v` in `ctx.graph` as an array `Array Vertex`. -/
-def MeetContext.dataDescendants (ctx : MeetContext) (v : Vertex) : Array Vertex :=
+def LUBContext.dataDescendants (ctx : LUBContext) (v : Vertex) : Array Vertex :=
   let cond := ctx.graph.condensation
   match cond.componentsMap[v]? with
   | none => #[]
@@ -163,7 +163,7 @@ _See also:_ [best2023automaticallyGeneralizingTheorems].
   the `IsLinearOrder` hypothesis up, because the instances of `Std.Refl` that `IsPreorder` and
   `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
 -/
-def MeetContext.sharesDataDesc (ctx : MeetContext) (u v : Vertex) : Bool :=
+def LUBContext.sharesDataDesc (ctx : LUBContext) (u v : Vertex) : Bool :=
   (u.matchingVertices ctx.includeSubsumers).any fun u' =>
     let descsᵤ := ctx.dataDescendants u'
     (v.matchingVertices ctx.includeSubsumers).any fun v' =>
@@ -171,7 +171,7 @@ def MeetContext.sharesDataDesc (ctx : MeetContext) (u v : Vertex) : Bool :=
       descsᵤ.any fun dᵤ => descsᵥ.any (Vertex.unifiable dᵤ ·)
 
 /-- Every bvar of a requirement's `pattern` must be substitutable by the binder's carriers. -/
-def MeetContext.filterReqVerts (ctx : MeetContext) (b : TargetedBinder)
+def LUBContext.filterReqVerts (ctx : LUBContext) (b : TargetedBinder)
     (reqVerts : HashSet Vertex) : Array Vertex :=
   let byArity := reqVerts.toArray.filter (fun v => v.pattern.all (·.looseBVarRange ≤ b.subst.size))
   byArity.filter fun u =>
@@ -197,10 +197,10 @@ def sccRepresentative (scc : Array Vertex) : Option Vertex :=
 
 
 /--
-Returns the meet of `reqs` in `ctx.graph.condensation`, if a unique meet exists. Otherwise, returns
-`none`.
+Returns the least upper bound (LUB) of `reqs` in `ctx.graph.condensation`, if a unique LUB exists.
+Otherwise, returns `none`.
 -/
-def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vertex) :
+def LUBContext.lub (ctx : LUBContext) (b : TargetedBinder) (reqs : Array Vertex) :
     Option Vertex :=
   -- De-duplicate, and include vertices that match requirements too if `includeSubsumers` is `true`,
   -- converting `reqs` into an array of sets, which will be interpreted by `minCommonAncestors` as
@@ -220,57 +220,57 @@ def MeetContext.meet (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vert
   -- so it should be considered a low-priority opportunity for future work.
 
 /-- Is `v` strictly weaker than `b` according to `ctx.graph`? -/
-def MeetContext.strictlyWeaker (ctx : MeetContext) (b : TargetedBinder) (v : Vertex) :
+def LUBContext.strictlyWeaker (ctx : LUBContext) (b : TargetedBinder) (v : Vertex) :
     Bool :=
   let bVertex := b.toVertex
   v != bVertex && ctx.reachesV bVertex v && ¬ ctx.reachesV v bVertex
 
 
 /--
-Split `reqs` up into non-data-descendant-sharing blocks and return the meets of the blocks as an
-array, or `none` if `reqs` can't be split up, or if any of the blocks don't have a meet, or if any
-of the blocks have multiple "meets", or if any of the blocks' meets are not strictly weaker than `b`
-(in which case we'd be e.g. replacing `[Group G]` with `[Group G] […]`, which would be pointless).
+Partition `reqs` into non-data-descendant-sharing blocks and return the LUBs of the blocks as an
+array, or `none` if `reqs` can't be split up, or if any of the blocks don't have a LUB, or if any of
+the blocks' LUBs are not strictly weaker than `b` (in which case we'd be e.g. replacing `[Group G]`
+with `[Group G] […]`, which would be pointless).
 -/
-def MeetContext.splitMeets (ctx : MeetContext) (b : TargetedBinder) (reqs : Array Vertex) :
+def LUBContext.lubsPartition (ctx : LUBContext) (b : TargetedBinder) (reqs : Array Vertex) :
     Option (Array Vertex) := Id.run do
   let blocks := partitionByDesc (HashSet.ofArray reqs) ctx.sharesDataDesc
   if blocks.size ≤ 1 then return none -- If `reqs` can't be split up, return `none`.
-  let mut out : Array Vertex := #[]
+  let mut lubs : Array Vertex := #[]
   for block in blocks do
-    let some m := ctx.meet b block.toArray | return none
-    unless ctx.strictlyWeaker b m do return none
-    out := out.push m
-  return some out
+    let some lub := ctx.lub b block.toArray | return none
+    unless ctx.strictlyWeaker b lub do return none
+    lubs := lubs.push lub
+  return some lubs
 
 
 /--
 What might we replace `b` with, given that `b` requires (or, more accurately, uses) `reqVerts`?
 
 This returns
-* `some #[m]` to indicate that `b` could be replaced by `m`,
-* `some #[m₁, …, mₙ]` to indicate that `b` could be split up into `m₁`, …, `mₙ`, or
+* `some #[lub]` to indicate that `b` could be replaced by `lub`,
+* `some #[lub₁, …, lubₙ]` to indicate that `b` could be split up into `lub₁`, …, `lubₙ`, or
 * `none` to indicate that `b` can't be weakened within `ctx.graph` under the constraints defined by
   `ctx.splitPolicy`, `ctx.absencePolicy`, and `ctx.includeSubsumers`.
 -/
-def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
+def LUBContext.replacement? (ctx : LUBContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option (Array Vertex) :=
   if reqVerts.isEmpty then some #[] else
-  let singleClass? : Option Vertex := (ctx.meet b reqVerts).filter (ctx.strictlyWeaker b)
+  let singleClass? : Option Vertex := (ctx.lub b reqVerts).filter (ctx.strictlyWeaker b)
   match ctx.splitPolicy with
   | .forbid => singleClass?.map (#[·])
   | .allow =>
     match singleClass? with
-    | some m => some #[m]
-    | none => ctx.splitMeets b reqVerts
+    | some lub => some #[lub]
+    | none => ctx.lubsPartition b reqVerts
   | .prefer =>
-    match ctx.splitMeets b reqVerts, singleClass? with
-    | some meets, some m =>
-      -- If any of the `mᵢ` is stronger than or equipotent to `m`, then there's no point in
-      -- splitting `b` up, so we just return `#[m]` in that case.
-      some (if meets.all (fun mᵢ => ¬ ctx.reachesV mᵢ m) then meets else #[m])
-    | some meets, none => some meets
-    | none, some m => some #[m]
+    match ctx.lubsPartition b reqVerts, singleClass? with
+    | some lubs, some lub =>
+      -- If any of the `lubᵢ` is stronger than or equipotent to `lub`, then there's no point in
+      -- splitting `b` up, so we just return `#[lub]` in that case.
+      some (if lubs.all (fun lubᵢ => ¬ ctx.reachesV lubᵢ lub) then lubs else #[lub])
+    | some lubs, none => some lubs
+    | none, some lub => some #[lub]
     | none, none => none
 
 
@@ -278,19 +278,19 @@ def MeetContext.replacement? (ctx : MeetContext) (b : TargetedBinder) (reqVerts 
 Return a (possibly empty) array of candidate weakenings for any of the targeted binders `binders`
 such that the requirements `reqs` are still satisfied.
 -/
-public def meetCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
+public def lubCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
     (reqs : Array Requirement) (cfg : LinterConfig := {}) (includeSubsumers : Bool := true) :
     Array Candidate := Id.run do
-  let ctx : MeetContext :=
+  let ctx : LUBContext :=
     { graph, absencePolicy := cfg.absencePolicy, splitPolicy := cfg.splitPolicy, includeSubsumers }
   let mut out : Array Candidate := #[]
   for b in binders do
     let bReqVerts : HashSet Vertex := reqs.foldl (init := {}) fun bReqVerts' req =>
       if req.binder.fvar == b.fvar then bReqVerts'.insert req.toVertex else bReqVerts'
-    let some meets := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
-    let shape := match meets with
+    let some lubs := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
+    let shape := match lubs with
       | #[] => WeakeningShape.drop
-      | #[meet] => WeakeningShape.weaken meet
-      | meets => WeakeningShape.split meets
+      | #[lub] => WeakeningShape.weaken lub
+      | lubs => WeakeningShape.split lubs
     out := out.push { binder := b, shape }
   return out

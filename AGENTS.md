@@ -3,7 +3,7 @@
 A Lean 4 + Mathlib linter (BSc thesis) that flags declarations whose typeclass
 assumptions can be **weakened** — e.g. suggesting `[Monoid G]` where `[Group G]`
 was assumed. It models the typeclass hierarchy as a DAG and computes the weakest
-class (the "meet") that a declaration's proof actually uses.
+class (the "join") that a declaration's proof actually uses.
 
 ## Rules for agents
 

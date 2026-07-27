@@ -219,8 +219,8 @@ deriving BEq, Repr
 
 /--
 **Idea:** Given the set of classes that a theorem uses, find the minimal common ancestor of that set
-in the class DAG, i.e., the weakest common ancestor of the elements of the set (i.e., their _meet_),
-if a unique one exists. The class DAG is not a lattice, however, so the meet is not guaranteed to
+in the class DAG, i.e., the weakest common ancestor of the elements of the set (i.e., their _join_),
+if a unique one exists. The class DAG is not a lattice, however, so the join is not guaranteed to
 exist. In those cases, an antichain of incomparable answers is returned.
 
 ---

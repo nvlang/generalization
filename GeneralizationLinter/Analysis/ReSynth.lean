@@ -212,7 +212,7 @@ value of `MonoidHom.mk'` applied to `MonoidHom.mk'`'s telescope. Call the result
 > dynamically generated constants simply define their signatures using the context within which
 > they're generated, and don't check whether a weaker signature could suffice for their conclusion.
 > In the `MonoidHom.mk'._proof_1` case, we have that its value happens to only need `MulOneClass M`,
-> `MulOneClass G`, and `IsRightCancelMul G`; the latter two meet at `RightCancelMonoid G`, so `Group
+> `MulOneClass G`, and `IsRightCancelMul G`; the latter two join at `RightCancelMonoid G`, so `Group
 > G` could be weakened to `RightCancelMonoid G` in `MonoidHom.mk'._proof_1`'s signature.
 
 This call `ctx.resynthArg body` will eventually call `ctx.reSynthArg ‹@MonoidHom.mk'._proof_1 M G

@@ -101,7 +101,7 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
   if binders.isEmpty then return #[]
   let chains ← getMIChains binders declInfo.type val
   let reqs ← getReqs binders chains
-  let mut candidates := meetCandidates G binders reqs config (includeSubsumers := config.subsumption)
+  let mut candidates := lubCandidates G binders reqs config (includeSubsumers := config.subsumption)
   if config.conclusionGuard then
     candidates := refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
   if config.redundancyGuard && config.verify then
