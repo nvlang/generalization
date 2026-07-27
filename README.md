@@ -1,7 +1,7 @@
 # Automated Theorem Generalization in Lean
 
 This project's primary goal is to contribute a typeclass linter to
-[Mathlib](https://github.com/leanprover-community/mathlib4) which flage overly strong typeclass
+[Mathlib](https://github.com/leanprover-community/mathlib4) which flags overly strong typeclass
 hypotheses and suggests weakenings.
 
 The source code is heavily commented. Whatever version of this project may ultimately end up in a
