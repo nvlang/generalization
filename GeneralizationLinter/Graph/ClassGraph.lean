@@ -28,8 +28,9 @@ Builds the class graph from the environment.
 ---
 **References**
 
-* [A. J. Best. 2023. _Automatically Generalizing Theorems Using
-  Typeclasses_.][best2023automaticallyGeneralizingTheorems]
+* Alex J. Best. 2023. Automatically Generalizing Theorems Using Typeclasses. In Fifth Workshop on
+  Formal Mathematics for Mathematicians, April 19, 2023. CEUR Workshop Proceedings. Retrieved from
+  [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-3377/fmm12.pdf).
 -/
 
 

@@ -26,11 +26,13 @@ linter.
 ---
 **References**
 
-* [A. J. Best. 2023. _Automatically Generalizing Theorems Using
-  Typeclasses_.][best2023automaticallyGeneralizingTheorems]
-* [D. J. King, J. Launchbury. 1995. _Structuring depth-first search algorithms
-  in Haskell_.][10.1145/199448.199530]
-
+* Alex J. Best. 2023. Automatically Generalizing Theorems Using Typeclasses. In Fifth Workshop on
+  Formal Mathematics for Mathematicians, April 19, 2023. CEUR Workshop Proceedings. Retrieved from
+  [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-3377/fmm12.pdf).
+* David J. King and John Launchbury. 1995. Structuring depth-first search algorithms in Haskell. In
+  Proceedings of the 22nd ACM SIGPLAN-SIGACT symposium on Principles of programming languages  -
+  POPL ’95, 1995. ACM Press, San Francisco, California, United States, 344–354.
+  [https://doi.org/10.1145/199448.199530](https://doi.org/10.1145/199448.199530)
 -/
 
 open Std (HashMap HashSet)
