@@ -188,7 +188,7 @@ matchE {#0 ↦ Nat} ‹#0› ‹Int› = none
 matchE {} ‹@#0 Nat› ‹List Nat› = none
 ```
 -/
-private partial def matchE (env : HashMap Nat Expr) (pattern target : Expr) :
+partial def matchE (env : HashMap Nat Expr) (pattern target : Expr) :
     Option (HashMap Nat Expr) :=
   match pattern with
   -- `j` is the bvar's de Bruijn index. The first occurrence of a bvar in a pattern will match any
@@ -364,7 +364,7 @@ subsumers #[.bvar 0, List (Nat × (.bvar 0)), .lit 42] = [
 ]
 ```
 -/
-private partial def subsumers (args : Array Expr) : List (Array Expr) :=
+partial def subsumers (args : Array Expr) : List (Array Expr) :=
   (subsumersGo #[] args.toList).map (·.1)
 
 /--
@@ -383,7 +383,7 @@ then the arguments of that application also need to be (syntactically) different
 argument of that application, as well as from every argument of the parent application, for the
 count to be accurate. And so on.)
 -/
-private partial def shapeCount : Expr → Nat
+partial def shapeCount : Expr → Nat
   | .bvar _ => 1
   | .lit _ => 2
   | e =>
@@ -396,7 +396,7 @@ Walks `args` and counts multiplicities of colors, returning a map from colors to
 multiplicities. In other words, for a given expression `e`, the map will indicate how often `e`
 occurs in `args` (be it as a top-level argument or an argument within an argument, etc.).
 -/
-private partial def colorMults (args : Array Expr) : HashMap Expr Nat :=
+partial def colorMults (args : Array Expr) : HashMap Expr Nat :=
   args.foldl (init := {}) go
 where
   go (colorMults' : HashMap Expr Nat) (arg : Expr) : HashMap Expr Nat :=

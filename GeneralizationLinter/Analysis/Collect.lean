@@ -452,7 +452,7 @@ def sourceArg? (e : Expr) : MetaM (Option Expr) := do
 
 
 /-- State monad to keep track of the `MIChain`s we've collected. -/
-private abbrev CollectM := StateRefT (Array MIChain) MetaM
+abbrev CollectM := StateRefT (Array MIChain) MetaM
 
 
 /--
@@ -484,7 +484,7 @@ hasDispatchSlot env `FunLike = false -- even though `FunLike` is an abbrev of `D
 **Note:** The case of `FunLike` is not important for us, because `FunLike` would get reduced to
 `DFunLike` before `hasDispatchSlot` would ever be called on it.
 -/
-private def hasDispatchSlot (env : Environment) (name : Name) : Bool :=
+def hasDispatchSlot (env : Environment) (name : Name) : Bool :=
   match env.find? name with
   | some info => go info.type
   | none => false
@@ -560,7 +560,7 @@ and which has some targeted binder's fvar as one of its direct arguments, we unf
 its body β-reduced against `e`'s arguments. This allows us to avoid having `e`'s signature introduce
 needlessly strong requirements, which dynamically generated constants tend to do.
 -/
-private def unfoldInternalHead? (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
+def unfoldInternalHead? (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     MetaM (Option Expr) := do
   let .const declName levels := e.getAppFn | return none
   unless declName.isInternalDetail do return none
@@ -579,7 +579,7 @@ Decide what to do with `e`:
   `C` (converted to a `Key`) as `head`.
 * If `e` is not a class application, call `walk` on `e`.
 -/
-private partial def route (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
+partial def route (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
   if (← isClass? (← inferType e)).isSome then collect binderIdOf e none
   else walk binderIdOf e
@@ -590,7 +590,7 @@ If `e` corresponds to a maximal instance chain, `collect` will record that insta
 `MIChain`. If `e` does not correspond to a maximal instance chain, then `collect` will recursively
 find any maximal instance chains that it may contain.
 -/
-private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
+partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     (chainHead? : Option Key) : CollectM Unit := do
   let e := e.consumeMData -- strip .mdata
   -- See `unfoldInternalHead?`.
@@ -635,7 +635,7 @@ private partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
 
 
 /-- Find any spot in `e` where the elaborator put an instance transformation or root instance. -/
-private partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
+partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
   match e with
   | .app .. =>
