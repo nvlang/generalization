@@ -46,7 +46,7 @@ public def cachedClassGraph : MetaM ClassGraph := do
     if fp' == fp then return G
   let env ← getEnv
   -- Only instances can produce edges. We enforce this restriction because the linter targets
-  -- non-explicit binders for weakening, and non-explicit binders are resoved either using instance
+  -- non-explicit binders for weakening, and non-explicit binders are resolved either using instance
   -- synthesis, or unification with instance synthesis as a fallback. So, when we analyze a
   -- declaration, we know that the current binder could be resolved, and we need to make sure that
   -- the weakened version we suggest can also be resolved, which is guaranteed (-ish) when there's a

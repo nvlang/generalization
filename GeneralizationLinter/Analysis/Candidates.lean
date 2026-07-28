@@ -42,7 +42,10 @@ public def Candidate.replacements (c : Candidate) : Array Vertex :=
   | .split ts => ts
 
 
-/-- Everything `suggest` needs to produce its answers, compiled into one structure. -/
+/--
+Things that we need to compute the least upper bounds, or things which may affect said computation,
+compiled into one structure.
+-/
 private structure LUBContext where
   /-- Class graph. -/
   graph : ClassGraph
@@ -88,7 +91,7 @@ where
     -- Recurse into application heads and arguments.
     | .app fn arg => occursIn σ i fn || occursIn σ i arg
     -- In patterns, we just support bvars, applications, and constants, and constants never contain
-    -- bvars, so if we reach this point we knwo that the expression doesn't contain any bvar at all.
+    -- bvars, so if we reach this point we know that the expression doesn't contain any bvar at all.
     | _ => false
   /-- Given constraints `σ` mapping bvar indices to `Expr` values they are required to have, see if
       two expressions can be unified, and return the updated constraints map if so. -/
@@ -147,7 +150,10 @@ introduce a diamond. This is because our class graph's encoding of instance mapp
 doesn't keep track of the relations between the bound variables of one vertex and another under any
 given instance mapping.
 
-_See also:_ [best2023automaticallyGeneralizingTheorems].
+_See also:_ Alex J. Best. 2023. Automatically Generalizing Theorems Using Typeclasses. In Fifth
+Workshop on Formal Mathematics for Mathematicians, April 19, 2023. CEUR Workshop Proceedings.
+Retrieved from [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-3377/fmm12.pdf).
+
 
 ---
 **Examples**
@@ -158,10 +164,10 @@ _See also:_ [best2023automaticallyGeneralizingTheorems].
   hypothesis up, because the instances of `Mul` that `Semigroup` and `MulOneClass` each use would
   not guaranteed to be the same anymore.
 * `sharesDataDesc` would return `false` for `IsPreorder` and `Std.Total`, since those two classes
-  only share the non-data-carrying descendant `Std.Refl`. This means that a theorem with hypothesis
-  `[IsLinearOrder α]` but which uses only `[IsPreorder α]` and `[Std.Total α]` could safely split
-  the `IsLinearOrder` hypothesis up, because the instances of `Std.Refl` that `IsPreorder` and
-  `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
+  only share the non-data-carrying descendants such as `Std.Refl`. This means that a theorem with
+  hypothesis `[IsLinearOrder r]` but which uses only `[IsPreorder r]` and `[Std.Total r]` could
+  safely split the `IsLinearOrder` hypothesis up, because the instances of `Std.Refl` that
+  `IsPreorder` and `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
 -/
 def LUBContext.sharesDataDesc (ctx : LUBContext) (u v : Vertex) : Bool :=
   (u.matchingVertices ctx.includeSubsumers).any fun u' =>
@@ -170,7 +176,11 @@ def LUBContext.sharesDataDesc (ctx : LUBContext) (u v : Vertex) : Bool :=
       let descsᵥ := ctx.dataDescendants v'
       descsᵤ.any fun dᵤ => descsᵥ.any (Vertex.unifiable dᵤ ·)
 
-/-- Every bvar of a requirement's `pattern` must be substitutable by the binder's carriers. -/
+/--
+Applies two filters to `reqVerts` and returns the result. The filters are:
+* Every bvar of a requirement's `pattern` must be substitutable by the binder's carriers.
+* Requirements that are descendants of other requirements are redundant and hence dropped.
+-/
 def LUBContext.filterReqVerts (ctx : LUBContext) (b : TargetedBinder)
     (reqVerts : HashSet Vertex) : Array Vertex :=
   let byArity := reqVerts.toArray.filter (fun v => v.pattern.all (·.looseBVarRange ≤ b.subst.size))

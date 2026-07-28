@@ -26,14 +26,6 @@ open Std (HashSet)
 Builds the class graph from the environment.
 
 ---
-**Main definitions**
-
-* `isWeakeningEdge`: helper for `extractEdge?` that determines whether an edge should be considered
-  a weakening edge.
-* `extractEdge?`: convert an instance into a `ClassEdge`, if appropriate.
-* `ofEnv`: build the class graph from the environment.
-
----
 **References**
 
 * [A. J. Best. 2023. _Automatically Generalizing Theorems Using
@@ -175,8 +167,8 @@ all of the following conditions are satisfied:
     `statableFrom`).
 
     **Why?** Our graph's edges are ordered pairs of vertices, each vertex representing a specific
-    kind of class application. For the graph to be sound, wee need each edge to guarantee that,
-    given the source vertex, we can reach the target vertex. If the target is not statable from the
+    kind of class application. For the graph to be sound, we need each edge to guarantee that, given
+    the source vertex, we can reach the target vertex. If the target is not statable from the
     source's arguments, then this cannot be the case.
 
 2.  Every class-typed argument of the declaration other than the source is contained in the source's
@@ -263,14 +255,14 @@ Processes a declaration into an edge for the class graph, if appropriate.
     some { src := `Monoid, tgt := `Semigroup }
   ```
 
-* **Multi-premise instance declaration yielding.** Suppose we call `extractEdge?` on the following
-  instance declaration:
+* **Multi-premise instance declaration yielding an edge.** Suppose we call `extractEdge?` on the
+  following instance declaration:
 
   ```
   instance Algebra.toModule {R A} {_ : CommSemiring R} {_ : Semiring A} [Algebra R A] : Module R A
   ```
 
-  Despite having multiple premises, this would result in an edge:
+  Despite having multiple premises, this would lead to an edge being extracted:
 
   ```
   extractEdge? `Algebra.toModule = some { src := `Algebra, tgt := `Module }
@@ -316,7 +308,7 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     unless ← isWeakeningEdge srcT concl classPrems.pop do return none
     let tgtK ← toKey concl
     -- Opaque carriers, i.e., carriers whose structure `canonArg` could not preserve, are abstracted
-    -- to bvars, lead to `subst` entries that aren't just fvars. For example: `Class1 (Class2 α)`
+    -- to bvars, leading to `subst` entries that aren't just fvars. For example: `Class1 (Class2 α)`
     -- (not opaque) gets `pattern := #[Class2 (bvar 0)]` and `subst := #[α]`, while
     -- `Class1 (OpaqueSomething α)` gets `pattern := #[bvar 0]` and `subst := #[OpaqueSomething α]`.
     -- We don't want to accept this latter kind of target. The same goes for the source.

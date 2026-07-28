@@ -63,7 +63,7 @@ def reshapeRedundantToDrops (declInfo : ConstantInfo) (candidates : Array Candid
 
 /--
 Filter out candidates in `candidates` that propose replacing a binder with the conclusion of the
-targeted dclaration.
+targeted declaration.
 
 ---
 **Example**
@@ -254,13 +254,13 @@ Suppose we have
 ```
 theorem foo {R M : Type*}
   [inst₁ : Ring R]
-  [isnt₂ : AddCommMonoid M]
+  [inst₂ : AddCommMonoid M]
   [inst₃ : @Module R M (@Ring.toSemiring R inst₁) inst₂] : … := …
 ```
 
 The typical use case for `binderSourceNamesBinder` would be checking whether weakening `[inst₁ :
 Ring R]` to `[inst₁ : Semiring R]` would require the user to modify `foo`'s other binders in any
-way. To check this, we would call ``binderSourceNamesBinder #[‹[isnt₂ : AddCommMonoid M]›, ‹[inst₃ :
+way. To check this, we would call ``binderSourceNamesBinder #[‹[inst₂ : AddCommMonoid M]›, ‹[inst₃ :
 @Module R M (@Ring.toSemiring R inst₁) inst₂]›] `inst₁`` and get `true`.
 
 Had we instead had the following instead
@@ -268,11 +268,11 @@ Had we instead had the following instead
 ```
 theorem foo {R M : Type*}
   [inst₁ : Ring R]
-  [isnt₂ : AddCommMonoid M]
+  [inst₂ : AddCommMonoid M]
   [inst₃ : Module R M] : … := …
 ```
 
-then we'd have called ``binderSourceNamesBinder #[‹[isnt₂ : AddCommMonoid M]›, ‹[inst₃ : Module R
+then we'd have called ``binderSourceNamesBinder #[‹[inst₂ : AddCommMonoid M]›, ‹[inst₃ : Module R
 M]›] `inst₁`` and gotten `false`.
 
 ---
@@ -323,10 +323,13 @@ public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool
 
 
 /--
-If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just
-run `x` with the existing `maxHeartbeats`.
+If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just run
+`x` with the existing `maxHeartbeats`.
+
+If a runtime exception occurs while running `x`, it is caught and `dflt` ("default") is returned.
+
+If `budget` is `0`, runs `x` directly without any restrictions or exception handling.
 -/
--- Note: `dflt` stands for "default".
 public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
     TermElabM α := do
   if budget == 0 then return ← x
@@ -334,6 +337,7 @@ public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermE
   let effectiveMax := if ambient == 0 then budget else min budget ambient
   tryCatchRuntimeEx
     (withTheReader Core.Context (fun c => { c with maxHeartbeats := effectiveMax })
+      -- `withCurrHeartbeats` resets the heartbeat budget. #TODO
       (withCurrHeartbeats x))
     (fun _ => pure dflt)
 
@@ -344,13 +348,12 @@ deriving Inhabited
 
 
 /--
-Given a declaration with constant into `const` and value source code `bodyStx` (as well as a linter
+Given a declaration with constant info `const` and value source code `bodyStx` (as well as a linter
 config and class graph), return an array of verified, graded weakenings that could be applied to the
 declaration.
 -/
 public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (src : DeclSource) : TermElabM (Array GradedWeakening) := do
-
   let candidates ← withHeartbeatBudget cfg.generationHeartbeats #[] (guardedCandidates cfg graph const)
   if candidates.isEmpty then return #[]
   -- Get the binder names, i.e., for `[inst : Monoid M]`, this would be `` `inst ``. Note that

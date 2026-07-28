@@ -82,15 +82,6 @@ public structure LinterConfig where
   -/
   splitPolicy : SplitPolicy := .forbid
 
-  /--
-  Whether declarations within `omit … in` commands or within sections with any `omit …` commands
-  should be analyzed by the linter. Default: `false`.
-
-  **Warning:** For these declarations, the linter cannot guarantee that its suggestions will
-  elaborate.
-  -/
-  acceptOmits : Bool := false
-
   -- Options for experimental ablation measurements.
   verify : Bool := true
   subsumption : Bool := true

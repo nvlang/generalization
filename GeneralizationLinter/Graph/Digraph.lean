@@ -13,15 +13,15 @@ namespace GeneralizationLinter
 /-!
 # Directed Graphs
 
-Small directed graph module providing the core graph-theoretic mechanisms used
-by the generalization linter.
+Small directed graph module providing the core graph-theoretic mechanisms used by the generalization
+linter.
 
 ---
 **Main definitions**
 
 * `Digraph`: Implemented as an adjacency list.
 * `Condensation`: Condensation of digraph into DAG of SCCs.
-* `minCommonAncestors`: Find the least upper bounds.
+* `minCommonAncestors`: Find the minimal upper bounds.
 
 ---
 **References**
@@ -175,8 +175,7 @@ public structure Condensation (V : Type u) [BEq V] [Hashable V] where
 
 
 /--
-Condense digraph `G` into DAG of SCCs of `G` and return the result as a
-`Condensation` structure.
+Condense digraph `G` into DAG of SCCs of `G` and return the result as a `Condensation` structure.
 -/
 public def condense (G : Digraph V) : Condensation V :=
   let (members, componentsMap) := G.sccs.foldl
@@ -251,19 +250,19 @@ given encodes the relationships between all of these classes:
   class DAG is not a lattice.
 
 ---
-**Examples**
+**Examples** (as of Mathlib v4.32.1)
 
 * **Unique minimal common ancestor:** Sometimes, there is exactly one minimal common ancestor.
 
   ```
-  minCommonAncestors #[{Monoid}, {CommSemigroup}] = #[#[CommMonoid]]
+  minCommonAncestors #[{Monoid #0}, {CommSemigroup #0}] = #[#[CommMonoid #0]]
   ```
 
 * **No common ancestors:** Quite often, there may not exist any class which satisfies all the given
   requirements.
 
   ```
-  minCommonAncestors #[{Inv}, {SDiff}] = #[]
+  minCommonAncestors #[{Inv #0}, {SDiff #0}] = #[]
   ```
 
 * **Minimal common ancestors of single classes:** Within an SCC of the class graph
@@ -272,8 +271,8 @@ given encodes the relationships between all of these classes:
   of the SCCs of the class graph (pre-condensation) are singletons.
 
   ```
-  minCommonAncestors #[{Nonempty}] = #[#[Inhabited, Nonempty]]
-  minCommonAncestors #[{Monoid}] = #[#[Monoid]]
+  minCommonAncestors #[{One #0}] = #[#[One #0, OfNat #0 1]]
+  minCommonAncestors #[{Monoid #0}] = #[#[Monoid #0]]
   ```
 
 * **Multiple non-equipotent minimal common ancestors:** Rarely, requirements may have multiple
@@ -281,7 +280,6 @@ given encodes the relationships between all of these classes:
 
   ```
   minCommonAncestors #[{Add}, {Mul}] = #[
-    #[FirstOrder.Language.Structure]
     #[Lean.Grind.Semiring],
     #[Distrib],
   ]
@@ -371,9 +369,9 @@ Partitions `used` into subsets whose down-sets are disconnected according to `co
 ---
 **Example**
 
-Roughly speaking, in our use-case, if `partitionByDesc` was called on `{Semigroup, MulOneClass,
-IsPreorder, IsTotal}`, it would return `[{Semigroup, MulOneClass}, {IsPreorder}, {IsTotal}]`. Refer
-to the examples documented for `sharesDataDesc` for more information.
+Roughly speaking, in our use-case, if `partitionByDesc` was called on `{Semigroup #0, MulOneClass
+#0, IsPreorder #0}`, it would return `[{Semigroup #0, MulOneClass #0}, {IsPreorder #0}]`. See
+`LUBContext.sharesDataDesc` for more information.
 -/
 public def partitionByDesc (used : HashSet V) (conn : V → V → Bool) : Array (HashSet V) :=
   coalesceWith (·.union ·) (fun a b => a.any fun x => b.any (conn x))

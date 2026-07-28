@@ -170,8 +170,23 @@ First-order¹ syntactic matcher.
   not.
 
 ---
-**Example**
+**Examples**
 
+```
+matchE {} ‹#0› ‹Nat› = some {#0 ↦ Nat}
+matchE {} ‹#0› ‹List Nat› = some {#0 ↦ List Nat}
+matchE {} ‹Prod #0 #1› ‹Prod Nat Int› = some {#0 ↦ Nat, #1 ↦ Int}
+matchE {} ‹Prod #0 #0› ‹Prod Nat Nat› = some {#0 ↦ Nat}
+matchE {} ‹Prod #0 #0› ‹Prod Nat Int› = none
+matchE {} ‹List #0› ‹List Nat› = some {#0 ↦ Nat}
+matchE {} ‹List #0› ‹Option Nat› = none
+matchE {} ‹List #0› ‹Nat› = none
+matchE {} ‹Nat› ‹Nat› = some {}
+matchE {} ‹Nat› ‹Int› = none
+matchE {#0 ↦ Nat} ‹#0› ‹Nat› = some {#0 ↦ Nat}
+matchE {#0 ↦ Nat} ‹#0› ‹Int› = none
+matchE {} ‹@#0 Nat› ‹List Nat› = none
+```
 -/
 private partial def matchE (env : HashMap Nat Expr) (pattern target : Expr) :
     Option (HashMap Nat Expr) :=
@@ -333,21 +348,21 @@ the arrays `#[p₁, …, pₙ]` for which we have that `f p₁ … pₙ` subsume
 **Example**
 
 ```
-subsumers #[.bvar 3] = [#[.bvar 3]]
+subsumers #[.bvar 3] = [#[.bvar 0]]
 subsumers #[.lit 42] = [#[.bvar 0], #[42]]
 subsumers #[.bvar 0, List (Nat × (.bvar 0)), .lit 42] = [
-  #[#0, #1, #2]
-  #[#0, #1, 42]
-  #[#0, List #1, #2]
-  #[#0, List #1, 42]
-  #[#0, List (Prod #1 #0), #2]
-  #[#0, List (Prod #1 #0), 42]
-  #[#0, List (Prod #1 #2), #3]
-  #[#0, List (Prod #1 #2), 42]
-  #[#0, List (Prod Nat #0), #1]
-  #[#0, List (Prod Nat #0), 42]
-  #[#0, List (Prod Nat #1), #2]
-  #[#0, List (Prod Nat #1), 42]
+  #[.bvar 0, .bvar 1, .bvar 2]
+  #[.bvar 0, .bvar 1, 42]
+  #[.bvar 0, List (.bvar 1), .bvar 2]
+  #[.bvar 0, List (.bvar 1), 42]
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), .bvar 2]
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), 42]
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), #3]
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), 42]
+  #[.bvar 0, List (Prod Nat (.bvar 0)), .bvar 1]
+  #[.bvar 0, List (Prod Nat (.bvar 0)), 42]
+  #[.bvar 0, List (Prod Nat (.bvar 1)), .bvar 2]
+  #[.bvar 0, List (Prod Nat (.bvar 1)), 42]
 ]
 ```
 -/
@@ -395,7 +410,7 @@ An upper bound for how many subsumers `args` may have:
 $$
   \prod_{\texttt{arg}\in\texttt{args}} \texttt{shapeCount}(\texttt{arg}) \cdot
   \prod_{\texttt{mult}\in\texttt{colorMults}(args)} \texttt{bell}(\texttt{mult})
-  \geq |\texttt{subsumers}(\texttt{args})|
+  \geq |\texttt{subsumers}(\texttt{args})|.
 $$
 -/
 def enumBudget (args : Array Expr) : Nat :=

@@ -132,8 +132,10 @@ def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
 
 
 /--
-Given a weakening candidate `c` for a declaration with constant info `const`, returns a pair of
-strings, the first string indicating what the existing binder looks like (e.g., `Group G`)
+Given a weakening candidate `candidate` for a declaration with constant info `const`, returns a pair
+of strings, the first string indicating what the existing binder looks like (e.g., `[Group G]`), and
+the second string indicating the class application to which said binder may be weakened (e.g.,
+`Monoid G`).
 -/
 def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
   targetedBinderTelescope const.type fun lds _ => do
@@ -228,8 +230,8 @@ private def statsOfGraded (gw : GradedWeakening) : Json :=
 
 
 /--
-Run the typeclass linter on the declaration named `declName` whose `ConstantInfo`` is `const` and
-whose value is described by syntax tree `bodyStx`.
+Run the typeclass linter on the declaration named `declName` whose `ConstantInfo` is `const` and
+whose syntax is described by `src`.
 -/
 def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : ConstantInfo)
     (src : DeclSource) (declName : Name)
@@ -265,8 +267,8 @@ This is the structure that gets registered via `initialize addLinter linter`, an
 function runs for every top-level command.
 
 For each command that `linter.run` is called on, it figures out whether it should run
-`lintTypeclassesFor` and, if so, sets up the `DeclSource` record that they'll
-need and, in the case of `lintTypeclassesFor`, builds (or fetches from cache) the typeclass graph.
+`lintTypeclassesFor` and, if so, sets up the `DeclSource` record that they'll need and builds (or
+fetches from cache) the typeclass graph.
 -/
 public def linter : Linter where
   -- `withSetOptionIn` peels off leading `set_option … in` commands. However, in our docstring

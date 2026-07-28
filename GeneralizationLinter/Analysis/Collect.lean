@@ -254,8 +254,8 @@ public structure TargetedBinder extends Key where
   fvar : BinderId
   /--
   Binder's 0-indexed position among the declaration's targeted binders. This allows
-  `ReSynth.rebuildWeakened` to locate the binder despite re-telescoping the declaration with fresh
-  fvars.
+  `ReSynth.getNthTargetedBinder` to locate the binder despite re-telescoping the declaration with
+  fresh fvars.
   -/
   idx : Nat
   /-- Binder's annotation. -/

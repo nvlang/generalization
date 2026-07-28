@@ -21,62 +21,21 @@ public inductive WrapperClassification where
   | replayable
   /--
   "Declaration wrappers" that we can ignore, because they don't affect our linter's verdict (in the
-  case of `omit`, this assumes diamond coherence; see implementation notes below). These are
-  `include … in` commands, and `omit … in` commands that don't contain any `Term.hole` or
-  `Term.syntheticHole` within them.
+  case of `omit`, it's merely that they are relatively unlikely to affect our linter's verdict "in
+  spirit"; see implementation notes below).
 
   ---
   **Implementation notes**
 
-  `omit`s with holes are tricky for us. Consider the following example:
-
-  ```
-  variable {α β : Type} [Group α] [Inv β]
-
-  omit [Inv _] in -- or section-wide `omit [Inv _]`
-  theorem foo (a : α) : a⁻¹ = a⁻¹ := rfl
-  ```
-
-  If we treated `omit`s with holes like any other `omit`s and just ignored them, the linter would
-  suggest the weakening `[Group α] ↝ [Inv α]` for `foo`. If the user then went ahead and applied
-  that weakening without removing the `omit`, they'd get an error. For our purposes, this means that
-  the weakening would be a false positive.
-
-  Given that Mathlib, as of v4.32.1, doesn't have a single `omit` declaration with a hole, skipping
-  declarations that do doesn't cost us any recall, while removing this "attack vector".
-
-  We still need to show why "hole-less" `omit … in …` and `omit …` (section-wide) are fine, however.
-
-  The argument relies on the assumption of diamond coherence. To see why it needs the assumption,
-  consider the following example:
-
-  ```
-  variable {α : Type} [inst₁ : Group α] [inst₂ : Inv α]
-
-  omit [Inv α] in -- or `omit [Inv α]`
-  theorem foo (a : α) :
-    @Inv.inv α (@DivInvMonoid.toInv α (@Group.toDivInvMonoid α inst₁)) a =
-    @Inv.inv α (@DivInvMonoid.toInv α (@Group.toDivInvMonoid α inst₁)) a := rfl
-  ```
-
-  A few observations here:
-  * The explicit `@…` transformations are important here: `theorem foo (a : α) : a⁻¹ = a⁻¹ := rfl`
-    would emit the error `` cannot omit referenced section variable `inst₂` ``. That's because,
-    without the `omit`, `foo` would just use `inst₂` instead of `inst₁`, as it prefers not having to
-    call a bunch of projections.
-  * Diamond coherence is violated here, as both `inst₁` and `inst₂` share the data-carrying
-    descendant `Inv α`.
-  * The linter would suggest weakening `[inst₁ : Group α]` to `[inst₁ : Inv α]`, with the caveat
-    that the weakening would require `foo`'s statement to be modified (it'd have to replace the two
-    `@Inv.inv α (@DivInvMonoid.toInv α (@Group.toDivInvMonoid α inst₁))` with `inst₁` after the
-    weakening).
-
-  A hole-free `omit [SomeClass a₁ … aₙ]` pins all its explicit arguments `a₁`, …, `aₙ`. For a
-  weakening suggestion to clash with `[SomeClass a₁ … aₙ]`, we would need to have that
-
-  2.  Fact: The linter will never introduce new names. Combined with the fact that the omitted names
-      cannot be in the given declaration's scope, this implies that the suggested weakening can't
-      intersect/clash with the omitted names.
+  `omit`s are tricky for us, and can invalidate `gradedWeakenings`'s `SourceIntact` verdicts. The
+  most common case is a suggested weakening being sensible but requiring some `omit` command(s)
+  being adjusted. Ensure that `gradedWeakenings`'s `SourceIntact` verdicts remain accurate in such
+  cases would require a significant amount of machinery, and `omit`s are relatively rare in Mathlib,
+  so the compromise we made was to skip declarations wrapped in or affected by `omit`s by default,
+  but provide the option `generalizationLinter.acceptOmits`, which, when set to `true`, will lint
+  these same declarations as if there were no `omit`s at all. The idea is that the user is then
+  aware of the caveat that `omit`s impose on suggestions' `SourceIntact` verdicts when `omit`s are
+  involved.
   -/
   | ignorable
   /--
@@ -91,7 +50,7 @@ deriving Inhabited, BEq
 /--
 `lemma` is a Mathlib macro that the elaborator expands to `theorem`. However, pre-elaboration, its
 `SyntaxNodeKind` is `` `lemma ``, while the pre-elaboration `SyntaxNodeKind` of all other
-declarations that the linter may analize is `Parser.Command.declaration`.
+declarations that the linter may analyze is `Parser.Command.declaration`.
 -/
 public def lemmaKind : SyntaxNodeKind := `lemma
 
@@ -100,7 +59,10 @@ public def lemmaKind : SyntaxNodeKind := `lemma
 public def classifyWrapper (w: Syntax) : WrapperClassification :=
   match w.getKind with
   | ``Parser.Command.open | ``Parser.Command.set_option => .replayable
-  | ``Parser.Command.include | ``Parser.Command.omit => .ignorable
+  | ``Parser.Command.include
+  -- Note: when `acceptOmits` is `false` (default), then `omit`s are not actually treated as
+  -- ignorable.
+  | ``Parser.Command.omit => .ignorable
   | _ => .refused
 
 public partial def hasOmitWrapper (stx : Syntax) : Bool :=
@@ -115,7 +77,7 @@ declaration. For example, if `stx` was
 open Nat in
 set_option pp.all true in
 omit [Monoid M] in
-@[instance] theorem something : … := …
+@[instance] lemma something : … := …
 ```
 
 then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all›],
@@ -193,7 +155,7 @@ The corresponding `Syntax` tree is:
 (See Lean/Parser/Command.lean, Lean/Parser/Term.lean, and Lean/Parser/Attr.lean for more information
 on the parentheticals in the tree above.)
 
-So `peelWrappers` would return `some (wrappers, decl)`, where `wrappers` and `decl` are as indicated
+So `peelWrappers?` would return `some (wrappers, decl)`, where `wrappers` and `decl` are as indicated
 above.
 -/
 public partial def peelWrappers? (stx : Syntax) (wrappers : Array Syntax := #[]) :
@@ -303,6 +265,7 @@ public def bodyTermOfDeclVal? (dval : Syntax) : TermElabM (Option Syntax) := do
 
 
 /--
+Syntactically "rewrap" a term with the replayable previously peeled wrappers.
 
 ---
 **Example**

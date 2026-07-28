@@ -77,7 +77,7 @@ def mentions (stale : HashSet FVarId) (e : Expr) : Bool :=
   e.hasAnyFVar stale.contains
 
 mutual
-/-- Rebuilds `e` into an expression that is valied in the weakened context. -/
+/-- Rebuilds `e` into an expression that is valid in the weakened context. -/
 partial def ReSynthContext.reSynthExpr (ctx : ReSynthContext) (e : Expr) :
     MetaM Expr := do
   match e with

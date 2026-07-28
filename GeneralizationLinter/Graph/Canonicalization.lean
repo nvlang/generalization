@@ -442,15 +442,15 @@ theorem thm.{w} {S : Type 0} {A : Type w} [CommSemiring S] [Semiring A] [Algebra
 
 To know what exactly it'd be suggesting (e.g., so that it can verify said suggestion candidate), the
 linter needs to construct `Module S A` somehow — the weakened binder's type. To do this, it calls
-`ReSynth.replBinderTypeFamilyAware` with `Algebra S A` as an `Expr` and the `Name` `` `Module ``.
-This in turn then computes the frame `#[S, A]` of `Algebra S A` using `frameArgs`, and then calls
-``reifyClass `Module #[S, A]``, which will output the `Expr` corresponding to `Module S A` (wrapped
-as an `Option`; if `` `Module `` were not a constant defined in the environment, or if something
-else went wrong, then `reifyClass` would return `none`).
+`ReSynth.replBinderType` with `Algebra S A` as an `Expr` and the `Name` `` `Module ``. This in turn
+then computes the frame `#[S, A]` of `Algebra S A` using `frameArgs`, and then calls ``reifyClass
+`Module #[S, A]``, which will output the `Expr` corresponding to `Module S A` (wrapped as an
+`Option`; if `` `Module `` were not a constant defined in the environment, or if something else went
+wrong, then `reifyClass` would return `none`).
 
 Note that, in constructing its output, `reifyClass` may perform instance synthesis: in the ``
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
-(instance metavariables spawned by `reifyClassGo`) via instance synthesis.
+(instance metavariables spawned by `reifyClass`) via instance synthesis.
 -/
 public def reifyClass (name : Name) (vals : Array Expr) (useKeySlots : Bool := false) :
     MetaM (Option Expr) := do
