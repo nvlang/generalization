@@ -14,7 +14,7 @@ namespace GeneralizationLinter
 # Vertex
 -/
 
-open Lean
+open Lean Expr
 open Std (HashMap)
 
 /-- Describes universe polymorphism (or lack thereof) for vertices. -/
@@ -336,8 +336,6 @@ where
       else (subsumersGo bvarColors color.getAppArgs.toList).map fun (args, bvarColors') =>
         (mkAppN color.getAppFn args, bvarColors')
     )
-
-open Lean Expr
 
 
 /--
