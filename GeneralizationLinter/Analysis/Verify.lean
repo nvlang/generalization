@@ -52,12 +52,13 @@ public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool
 Convert weakenings for which `replacementsRedundant` flagged every replacement as redundant to
 drops.
 -/
-def reshapeRedundantToDrops (declInfo : ConstantInfo) (candidates : Array Candidate) :
+def reshapeRedundantToDrops (declInfo : ConstantInfo) (verify : Bool) (candidates : Array Candidate) :
     MetaM (Array Candidate) :=
   candidates.filterMapM fun c => do
     if c.replacements.isEmpty then return some c
     unless (← replacementsRedundant declInfo.type c.binder.idx c.replacements) do return some c
     let d := { c with shape := .drop }
+    if !verify then return some d
     return if (← weakeningHolds declInfo d) then some d else none
 
 
@@ -104,8 +105,8 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
   let mut candidates := lubCandidates G binders reqs config (includeSubsumers := config.subsumption)
   if config.conclusionGuard then
     candidates := refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
-  if config.redundancyGuard && config.verify then
-    candidates ← reshapeRedundantToDrops declInfo candidates
+  if config.redundancyGuard then
+    candidates ← reshapeRedundantToDrops declInfo config.verify candidates
   return candidates
 
 
