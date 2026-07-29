@@ -120,8 +120,7 @@ Returns true if `type` has ≥1 binders that are targeted by the typeclass linte
 configuration).
 -/
 def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
-  let opts ← getOptions
-  let implicit := opts.getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
+  let implicit := generalizeTypeclasses.targetImplicit.get (← getOptions)
   forallTelescope type fun args _ => do
     for arg in args do
       let ld ← arg.fvarId!.getDecl

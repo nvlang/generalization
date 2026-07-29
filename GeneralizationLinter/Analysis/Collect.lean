@@ -353,7 +353,7 @@ public def isTargetedBinder (ld : LocalDecl) : MetaM Bool := do
   match ld.binderInfo with
   | .instImplicit => return true
   | .implicit | .strictImplicit =>
-    return (← getOptions).getBool ``generalizeTypeclasses.targetImplicit (defVal := true)
+    return generalizeTypeclasses.targetImplicit.get (← getOptions)
   | .default => return false
 
 
