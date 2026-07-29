@@ -262,6 +262,12 @@ def LUBContext.lubsPartition (ctx : LUBContext) (b : TargetedBinder) (reqs : Arr
     -- improving the subsumption vertex matching mechanism that causes them. With the stopgap in
     -- place, it should at least just be about recall though.
     unless lubs.contains lub do lubs := lubs.push lub
+  -- `partitionByDesc` partitioned the requirements, but that doesn't mean that the LUBs, which are
+  -- "further up" than the requirements, couldn't have shared data descendants now. So we need to
+  -- check. As always, this check is incomplete, due to our graph not encoding hyperedges.
+  for i in [0:lubs.size] do
+    for j in [i+1:lubs.size] do
+      if ctx.sharesDataDesc lubs[i]! lubs[j]! then return none
   return some lubs
 
 
