@@ -272,6 +272,14 @@ def LUBContext.lubsPartition (ctx : LUBContext) (b : TargetedBinder) (reqs : Arr
 
 
 /--
+Returns `true` if the `v.pattern ⊆ b.pattern`, assuming that `v` was computed via `ctx.replacement?
+b`.
+-/
+def LUBContext.preservesKeyArgsOf (_ctx : LUBContext) (b : TargetedBinder) (v : Vertex) : Bool :=
+  v.pattern.all fun arg => arg.isBVar || !arg.hasLooseBVars || b.toVertex.pattern.contains arg
+
+
+/--
 What might we replace `b` with, given that `b` requires (or, more accurately, uses) `reqVerts`?
 
 This returns
@@ -315,6 +323,19 @@ public def lubCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
     let bReqVerts : HashSet Vertex := reqs.foldl (init := {}) fun bReqVerts' req =>
       if req.binder.fvar == b.fvar then bReqVerts'.insert req.toVertex else bReqVerts'
     let some lubs := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
+    -- Subsumption can sometimes (≈10% of emissions) lead to key args getting "modified": for
+    -- example, `α` in the targeted binder becoming `αᵒᵖ` in the weakening candidate. Sometimes
+    -- this can be genuinely desirable, but most of the time it's not, so, for the time being,
+    -- we just try again with subsumption off if we are met with such a situation.
+    -- #TODO: Improving the vertex matching mechanism should, well, "subsume" this ad hoc fix.
+    let lubs :=
+      if lubs.all (ctx.preservesKeyArgsOf b) then
+        lubs
+      else
+        let ctxOff := { ctx with includeSubsumers := false }
+        match ctxOff.replacement? b (ctxOff.filterReqVerts b bReqVerts) with
+        | some alt => if alt.all (ctxOff.preservesKeyArgsOf b) then alt else lubs
+        | none => lubs
     let shape := match lubs with
       | #[] => WeakeningShape.drop
       | #[lub] => WeakeningShape.weaken lub
