@@ -321,11 +321,11 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     if srcK.familyArity > 0 then return none
     unless ← isWeakeningEdge srcT concl classPrems.pop do return none
     let tgtK ← toKey concl
-    -- Opaque carriers, i.e., carriers whose structure `canonArg` could not preserve, are abstracted
-    -- to bvars, leading to `subst` entries that aren't just fvars. For example: `Class1 (Class2 α)`
-    -- (not opaque) gets `pattern := #[Class2 (bvar 0)]` and `subst := #[α]`, while
-    -- `Class1 (OpaqueSomething α)` gets `pattern := #[bvar 0]` and `subst := #[OpaqueSomething α]`.
-    -- We don't want to accept this latter kind of target. The same goes for the source.
+    -- Key args whose structure `canonArg` could not preserve are abstracted to bvars, leading to
+    -- `subst` entries that aren't just fvars. For example: `Nonempty (Set α)` gets
+    -- `pattern := #[Set (.bvar 0)]` and `subst := #[α]`, while `Nonempty (α → Prop)` gets
+    -- `pattern := #[.bvar 0]` and `subst := #[α → Prop]`. We reject these kinds of key args for
+    -- now, but plan on supporting them in the future.
     unless srcK.subst.all (·.isFVar) && tgtK.subst.all (·.isFVar) do return none
     return some { src := srcK.toVertex, tgt := tgtK.toVertex }
 
