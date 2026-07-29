@@ -195,14 +195,20 @@ alternatives.
 def sccDemotedHeads : List Name := [`NSMul, `ZSMul, `NPow, `ZPow, `OfNat, `Trans]
 
 /--
+The deterministic "algorithm" by which we pick representatives when `sccDemotedHeads` doesn't
+already force our decision. We also use this to choose a minimal common ancestor when
+`LUBContext.lub` would otherwise return multiple.
+-/
+def pick (vertices : Array Vertex) : Option Vertex :=
+  vertices.foldl (init := none) fun best v => match best with
+    | none => some v
+    | some w => if (v.name.cmp w.name).isLT then some v else some w
+
+/--
 Deterministically picks a vertex within a given SCC, avoiding any vertex whose `Vertex.name` is in
 `sccDemotedHeads`.
 -/
 def sccRepresentative (scc : Array Vertex) : Option Vertex :=
-  let pick (vertices : Array Vertex) : Option Vertex := vertices.foldl (init := none) fun best v =>
-    match best with
-    | none => some v
-    | some w => if (v.name.cmp w.name).isLT then some v else some w
   pick (scc.filter fun v => !sccDemotedHeads.contains v.name) <|> pick scc
 
 
@@ -219,15 +225,17 @@ def LUBContext.lub (ctx : LUBContext) (b : TargetedBinder) (reqs : Array Vertex)
   let mca := (ctx.graph.condensation.minCommonAncestors reqs ctx.absencePolicy).filter fun scc =>
     scc[0]?.any (ctx.reachesV b.toVertex ·)
   match mca with
+  | #[] => none
   | #[scc] => sccRepresentative scc
-  | _ => none -- `mca` is empty or has size ≥2
   -- #TODO (low priority): If `mca` has size ≥2, it means there's multiple incomparable minimal
   -- common ancestors, each of which single-handedly satisfies all requirements (see
   -- `minCommonAncestors`'s docstring for an example). Instead of dropping them all and pretending
   -- there's no possible weakenings, we could try to simply present them as multiple viable options
-  -- (after verifying them, of course), or even just pick one ancestor from `mca` according to some
-  -- deterministic procedure and just go with that. However, this shouldn't happen all that often,
-  -- so it should be considered a low-priority opportunity for future work.
+  -- (after verifying them, of course). For now, we just pick one ancestor from `mca` according to
+  -- the deterministic procedure implemented by `pick` and go with that. This shouldn't happen all
+  -- that often anyway, so any further improvements here should be considered relatively
+  -- low-priority.
+  | sccs => pick (sccs.filterMap sccRepresentative)
 
 /-- Is `v` strictly weaker than `b` according to `ctx.graph`? -/
 def LUBContext.strictlyWeaker (ctx : LUBContext) (b : TargetedBinder) (v : Vertex) :
