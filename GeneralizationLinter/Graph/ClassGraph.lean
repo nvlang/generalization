@@ -91,7 +91,8 @@ We define statability inductively as follows: `e` is statable from `sArgs` if
 2.  `whnfR e` is an fvar occurring in `whnfR sArgs[i]` for some `i`,
 3.  `whnfR e` is "closed" according to `isClosed` (intuitively, this means it contains no fvars), or
 4.  `whnfR e` is an application of a "non-synonym" type former to arguments that are statable from
-    `sArgs`.
+    `sArgs`, or
+5.  `whnfR e` is a projection whose projected term is statable from `sArgs`.
 
 By synonym type former we mean any type former which unfolds to one of its own arguments. By
 "non-synonym" type formers we mean any other type former. For example, `OrderDual` is a synonym type
@@ -131,14 +132,19 @@ According to our definition of "statable", we have the following (where `α` and
 **Definition case 4:**
 * `Monoid α` is statable from `#[α]`.
 
+**Definition case 5:** Suppose `x : Nat × Nat`. Then:
+* `x.1` is statable from `#[x]`.
+* `x.1` is statable from `#[x.1]`.
+* `x` is statable from `#[x.1]`.
+
 **Definition cases 2 and 4:**
 * `Monoid α` is statable from `#[Group α]`.
 
 **Non-examples:**
 * `α` is not statable from `#[]` or `#[β]`.
 * `Monoid α` is not statable from `#[]` or `#[β]`.
-* `α` is not statable from `#[Monoid α]`.
 * `OrderDual α` is not statable from `#[α]`.
+* If `x y : Nat × Nat` then `x.1` is not statable from `#[y]` or `#[y.1]`.
 
 **Note:** The reason we claim that `OrderDual α` is not statable from `#[α]`, while at the same time
 claiming that `α` is statable from `#[OrderDual α]`, is that we don't want to introduce synonyms,
@@ -149,9 +155,16 @@ public partial def statableFrom (sArgs : Array Expr) (isClosed : Expr → MetaM 
   go (← sArgs.mapM whnfR) e
 where go (sArgs : Array Expr) (e : Expr) : MetaM Bool := do
   let e ← whnfR e
+  -- Case 1: (`whnfR e`) ∈ `sArgs`.
   if sArgs.contains e then return true
+  -- Case 2: `whnfR e` is an fvar occurring in `whnfR sArgs[i]` for some `i`,
   if e.isFVar then return sArgs.any (·.containsFVar e.fvarId!)
+  -- Case 3: `whnfR e` is "closed" (e.g., `ℕ` or `3`).
   if ← isClosed e then return true
+  -- Case 5: `whnfR e` is a projection on a term which is statable from `sArgs`.
+  if let .proj _ _ b := e then return ← go sArgs b
+  -- Case 4: `whnfR e` is an application of a non-synonym type former to arguments that are statable
+  -- from `sArgs`.
   let fn := e.getAppFn
   let some head := fn.constName? | return false
   if ← isSynonymFormer head then return false
