@@ -258,7 +258,10 @@ def LUBContext.lubsPartition (ctx : LUBContext) (b : TargetedBinder) (reqs : Arr
   for block in blocks do
     let some lub := ctx.lub b block.toArray | return none
     unless ctx.strictlyWeaker b lub do return none
-    lubs := lubs.push lub
+    -- #TODO: The below is a stopgap measure to ensure we don't emit duplicates. The real fix is
+    -- improving the subsumption vertex matching mechanism that causes them. With the stopgap in
+    -- place, it should at least just be about recall though.
+    unless lubs.contains lub do lubs := lubs.push lub
   return some lubs
 
 
