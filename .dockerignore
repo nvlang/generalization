@@ -1,0 +1,13 @@
+# Allow-list: the default context would include a multi-gigabyte .lake and the experiment results.
+# Keep in sync with the COPY instructions in experiments/Dockerfile.
+*
+!lean-toolchain
+!lakefile.toml
+!lake-manifest.json
+!GeneralizationLinter.lean
+!GeneralizationLinter/
+!experiments/run.py
+# Re-exclude what .gitignore excludes. These scratch files are not in the repository, so shipping them
+# would make the image's contents differ from the revision GL_REVISION names.
+GeneralizationLinter/**/_*
+**/.DS_Store
