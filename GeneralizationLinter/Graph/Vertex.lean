@@ -25,7 +25,11 @@ deriving BEq, Hashable, Inhabited
 
 
 /--
-A vertex of the class graph.
+The shape of class graph vertices.
+
+**Note:** Very often `v : Vertex` will not actually be a class graph vertex. For example, when we
+"query" the class graph, we do so with a `Vertex` record, but don't know yet whether that record is
+actually _in_ the class graph (and often it won't be).
 -/
 public structure Vertex where
   /--
@@ -146,19 +150,19 @@ public structure Key extends Vertex where
   subst : Array Expr
 
   /--
-  Length of the decomposed Π-prefix of a family application, 0 (default) for an ordinary
+  Length of the decomposed Π-prefix of a parametric class application, `0` (default) for an ordinary
   application. The prefix itself isn't stored, but rederived from the original binder type later on.
 
   ---
   **Examples**
 
   ```
-  [Group G]             -- familyArity := 0
-  [∀ i, C (f i)]        -- familyArity := 1
-  [∀ i [D i], C (f i)]  -- familyArity := 2
+  [Group G]             -- forallArity := 0
+  [∀ i, C (f i)]        -- forallArity := 1
+  [∀ i [D i], C (f i)]  -- forallArity := 2
   ```
   -/
-  familyArity : Nat := 0
+  forallArity : Nat := 0
 deriving Inhabited
 
 
@@ -437,6 +441,9 @@ the corresponding universe-polymorphic vertex.
 If `includeSubsumers` is `true` (default `false`), then the query is extended to any subsuming
 vertices.
 
+**Note:** The returned vertices are _not_ guaranteed to be vertices in the class graph. They're just
+"vertices" in the sense that they're `Vertex` records.
+
 ---
 **Examples**
 
@@ -445,7 +452,7 @@ vertices.
 * `Small.{123} α` will only match `Small α`, as there is no specific `Small.{123} α` vertex in the
   class graph.
 -/
-public def Vertex.matchingVertices (query : Vertex) (includeSubsumers : Bool := false) :
+public def Vertex.witnesses (query : Vertex) (includeSubsumers : Bool := false) :
     Array Vertex :=
   let vertices := if includeSubsumers then #[query] ++ query.properSubsumers else #[query]
   vertices.flatMap fun v =>

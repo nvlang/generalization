@@ -275,11 +275,12 @@ public def linter : Linter where
   -- of the `open B in` between them. So `peelWrappers?` still needs to handle `set_option`s as
   -- well.
   run := withSetOptionIn fun stx => do
-    -- `declCommand` is `stx` with all the leading `set_option … in`, `open … in`, and "hole-less"
-    -- `omit … in` removed; see `peelWrappers?`
+    -- `declCmd` is `stx` with all the leading `set_option … in`, `open … in`, `omit … in`, and
+    -- `include … in` removed; see `peelWrappers?`.
     let some (wrappers, declCmd) := peelWrappers? stx | return
     let some effectiveOpts ← wrapperEffectiveOptions? wrappers | return
     let lintOpts ← Command.withScope (fun s => { s with opts := effectiveOpts }) getLinterOptions
+    -- Is the typeclass linter on?
     let tcOn := getLinterValue linter.generalizeTypeclasses lintOpts
     unless tcOn do return
     let sectionBinders := (← getScope).varDecls.map (·.raw)

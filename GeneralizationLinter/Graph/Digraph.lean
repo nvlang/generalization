@@ -227,13 +227,10 @@ exist. In those cases, an antichain of incomparable answers is returned.
 ---
 **Implementation notes**
 
-The set of used classes is given as an array (`requirements`) of smaller sets. Currently, these
-smaller sets are usually singletons, except for used classes that are not universe polymorphic. In
-those cases, the corresponding smaller set consists of the used class with the specific universe
-level, and the universe-polymorphic version of the used class.
+The set of used classes is given as an array (`witnessSets`) of sets.
 
-The idea is that the array of smaller sets communicates the requirements as a general _AND of ORs._
-Let's call each smaller set a set of _witnesses_. The question then becomes:
+The idea is that the array of sets communicates the requirements as a general _AND of ORs._ Let's
+call each set a set of _witnesses_. The question then becomes:
 
 > Find a class that is a common ancestor to at least one witness of each requirement (i.e., a common
 ancestor of at least one transversal of the sets of witnesses).
@@ -287,28 +284,28 @@ given encodes the relationships between all of these classes:
   ]
   ```
 -/
-public def minCommonAncestors (c : Condensation V) (reqs : Array (HashSet V))
+public def minCommonAncestors (cond : Condensation V) (witnessSets : Array (HashSet V))
     (ap : AbsencePolicy := .failClosed) : Array (Array V) :=
   -- map sets of required classes to sets of (the indices of) required SCCs
-  let reqs := reqs.map c.indicesOf
-  let reqs := match ap with
-    | .failClosed => if reqs.any (·.isEmpty) then #[] else reqs
-    | .failOpenGuarded => reqs.filter (!·.isEmpty)
-  if reqs.isEmpty then #[]
+  let viableWitnessSets := witnessSets.map cond.indicesOf
+  let viableWitnessSets := match ap with
+    | .failClosed => if viableWitnessSets.any (·.isEmpty) then #[] else viableWitnessSets
+    | .failOpenGuarded => viableWitnessSets.filter (!·.isEmpty)
+  if viableWitnessSets.isEmpty then #[]
   else
-    let reqArr : Array (Array Nat) := reqs.map (·.toArray)
+    let viableWitnessArrays : Array (Array Nat) := viableWitnessSets.map (·.toArray)
     -- common ancestors are vertices which satisfy all the requirements
-    let commonAncestors := c.vertices.filter fun i =>
-      let d := c.downSetsByIndex.getD i {}
-      reqArr.all fun req => req.any d.contains
+    let commonAncestors := cond.vertices.filter fun i =>
+      let d := cond.downSetsByIndex.getD i {}
+      viableWitnessArrays.all fun witness => witness.any d.contains
     -- filter out non-minimal common ancestors
     let minimal := commonAncestors.filter fun ca =>
-      let d := c.downSetsByIndex.getD ca {}
+      let downSet := cond.downSetsByIndex.getD ca {}
       -- there isn't (`¬`) any other (`ca' != ca`) common ancestor weaker than `ca`
-      -- (`d.contains ca'`)
-      ¬ commonAncestors.any fun ca' => ca' != ca && d.contains ca'
+      -- (`downSet.contains ca'`)
+      ¬ commonAncestors.any fun ca' => ca' != ca && downSet.contains ca'
     -- convert each SCC index to the array of its members
-    minimal.map fun ca => c.members.getD ca #[]
+    minimal.map fun ca => cond.members.getD ca #[]
 
 
 /--
@@ -373,7 +370,7 @@ Partitions `used` into subsets whose down-sets are disconnected according to `co
 
 Roughly speaking, in our use-case, if `partitionByDesc` was called on `{Semigroup #0, MulOneClass
 #0, IsPreorder #0}`, it would return `[{Semigroup #0, MulOneClass #0}, {IsPreorder #0}]`. See
-`LUBContext.sharesDataDesc` for more information.
+`MCAContext.sharesDataDesc` for more information.
 -/
 public def partitionByDesc (used : HashSet V) (conn : V → V → Bool) : Array (HashSet V) :=
   coalesceWith (·.union ·) (fun a b => a.any fun x => b.any (conn x))

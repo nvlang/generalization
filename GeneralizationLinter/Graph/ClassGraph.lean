@@ -316,9 +316,9 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     let some src := classPrems.back? | return none
     let srcT ← src.fvarId!.getType
     let srcK ← toKey srcT
-    -- A family premise (e.g. `[∀ i, C (f i)]`) is not the same as `C`, so recording `C → tgt` would
-    -- be disingenuous.
-    if srcK.familyArity > 0 then return none
+    -- A parametric premise (e.g. `[∀ i, C (f i)]`) is not the same as `C`, so recording `C → tgt`
+    -- would be disingenuous.
+    if srcK.forallArity > 0 then return none
     unless ← isWeakeningEdge srcT concl classPrems.pop do return none
     let tgtK ← toKey concl
     -- Key args whose structure `canonArg` could not preserve are abstracted to bvars, leading to

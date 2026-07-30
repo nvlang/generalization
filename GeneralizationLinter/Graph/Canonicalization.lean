@@ -312,10 +312,10 @@ Given an `Expr` of a class application, canonicalize it into a `Key`.
   are taken from the `whnfR` form of the expression, so for example `IsNoetherianRing R`, which
   reduces to `IsNoetherian R R`, would have ```Vertex.name := ``IsNoetherian``` and `Vertex.pattern
   := #[#0, #0]`.
-* For a family class binder like `∀ prefix, C args`, the body (`C args`) determines the `Vertex`
-  fields, while the family index in the prefix is abstracted to a bvar. So, for example, for `[∀ i :
-  ι, Monoid (f i)]`, where `f : ι → Type*` is some free variable, we'd have ``name := `Monoid``,
-  `pattern := #[.bvar 0]`, `subst := #[f (.bvar 0)]`, and `familyArity := 1`.
+* For a parametric class binder like `∀ prefix, C args`, the body (`C args`) determines the `Vertex`
+  fields, while the parametric index in the prefix is abstracted to a bvar. So, for example, for `[∀
+  i : ι, Monoid (f i)]`, where `f : ι → Type*` is some free variable, we'd have ``name := `Monoid``,
+  `pattern := #[.bvar 0]`, `subst := #[f (.bvar 0)]`, and `forallArity := 1`.
 
 ---
 **Examples**
@@ -329,7 +329,7 @@ toKey ‹@Module R M inst₁ inst₂› = {
   pattern := #[.bvar 0, .bvar 1],
   -- `Key` fields
   subst := #[R, M],
-  familyArity := 0,
+  forallArity := 0,
 }
 
 -- class Small (α : Type*)
@@ -341,7 +341,7 @@ toKey ‹@Small (@Subtype α p)› = {
   pattern := #[Subtype (.bvar 0)],
   -- `Key` fields
   subst := #[p],
-  familyArity := 0,
+  forallArity := 0,
 }
 
 -- class IsWellFounded (α : Type*) (r : α → α → Prop)
@@ -353,7 +353,7 @@ toKey ‹@IsWellFounded (@Submodule α α inst₁ inst₂ inst₃) β› = {
   pattern := #[Submodule (.bvar 0) (.bvar 0), .bvar 1],
   -- `Key` fields
   subst := #[α, β]
-  familyArity := 0,
+  forallArity := 0,
 }
 
 -- Let `f` be a free variable with `f : ι → Type*`.
@@ -364,7 +364,7 @@ toKey ‹∀ i : ι, Monoid (f i)› = {
   pattern := #[.bvar 0],
   -- `Key` fields
   subst := #[f (.bvar 0)]
-  familyArity := 1,
+  forallArity := 1,
 }
 ```
 
@@ -381,12 +381,12 @@ public def toKey (e: Expr) : MetaM Key := do
         plainKey e0
       else
         return {
-          app with subst := app.subst.map (·.abstract prefixes), familyArity := prefixes.size
+          app with subst := app.subst.map (·.abstract prefixes), forallArity := prefixes.size
         }
   else
     plainKey e0
 where
-  /-- Canonicalize a non-family class application. -/
+  /-- Canonicalize a non-parametric class application. -/
   plainKey (e0 : Expr) : MetaM Key := do
     let (c, (_, subst)) ← (canonArg e0).run ({}, #[])
     let levels := match (← whnfR e0).getAppFn with
@@ -493,8 +493,8 @@ public partial def elabPatternEntry (e : Expr) : MetaM (Option Expr) := do
 
 
 /--
-The inverse of `toKey` for non-family class binders. Reifies the class `name` by instantiating the
-`pattern` of its key with the concrete values provided by `subst`, each elaborated against the
+The inverse of `toKey` for non-parametric class binders. Reifies the class `name` by instantiating
+the `pattern` of its key with the concrete values provided by `subst`, each elaborated against the
 corresponding slot's expected type, and then inferring the non-key-slots of `name`. Returns `none`
 if `pattern` needs more values than `subst` provides, or if elaboration or inference failed at any
 point.

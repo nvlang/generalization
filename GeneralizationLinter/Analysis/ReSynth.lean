@@ -57,16 +57,16 @@ def WeakenedDeclContext.weakenedTelescope (ctx : WeakenedDeclContext) : Array Ex
   ctx.pre ++ ctx.newBinders ++ ctx.rebuiltPost
 
 
-/-- Wrapper around `reifyClass` / `reify` that adds support for family class binders. -/
+/-- Wrapper around `reifyClass` / `reify` that adds support for parametric class binders. -/
 public def replaceBinderType (oldType : Expr) (replacement : Vertex) : MetaM (Option Expr) := do
-  -- If `oldType` reduces to a family binder `∀ prefixes, body` (where `body` is a class
+  -- If `oldType` reduces to a parametric binder `∀ prefixes, body` (where `body` is a class
   -- application), then deconstruct (i.e., telescope) `oldType`, reify the replacement class in
-  -- `body`, and reconstruct (`mkForallFVars`) the family binder with the new body `body'`.
+  -- `body`, and reconstruct (`mkForallFVars`) the parametric binder with the new body `body'`.
   if (← whnfR oldType).isForall then
     forallTelescopeReducing oldType fun prefixes body => do
       let some body' ← reifyClass replacement.name (← frameArgs body) | return none
       some <$> mkForallFVars prefixes body'
-  -- If `oldType` doesn't reduce to a family binder, then it's a class application.
+  -- If `oldType` doesn't reduce to a parametric binder, then it's a class application.
   else do
     let oldKey ← toKey oldType
     reify replacement.name replacement.pattern oldKey.subst
@@ -181,9 +181,9 @@ def MonoidHom.mk' [Group G] [MulOneClass M] (f : M → G)
 Let `value` refer to the value of `MonoidHom.mk'`.
 
 Our linter notices that, for `MonoidHom.mk'`, `Group G` can be weakened to `RightCancelMonoid G`. It
-then wants to verify this weakening candidate. In this process, `verifyWeakening` β-reduces the
+then wants to verify this weakening candidate. In this process, `weakeningResynthesizable` β-reduces the
 value of `MonoidHom.mk'` applied to `MonoidHom.mk'`'s telescope. Call the result of this β-reduction
-`body`. Then `verifyWeakening` calls `ctx.resynthArg body`.
+`body`. Then `weakeningResynthesizable` calls `ctx.resynthArg body`.
 
 > Now, for context, the elaborated value of `MonoidHom.mk'` is as follows:
 >
@@ -223,9 +223,9 @@ signature, it would try to synthesize this within the context of `MonoidHom.mk'`
 signature, and fail. It would then pass the fallback to `MonoidHom.mk'._proof_1` instead. This
 fallback would be `ctx.reSynthExpr ‹inst›`, which would simply consult `ctx.remap` and return the
 free variable `inst'` that corresponds to the weakened binder `[inst' : RightCancelMonoid G]`. Then,
-once `verifyWeakening` type-checks `body'` (the badly rebuilt `body`), the check would fail, as
+once `weakeningResynthesizable` type-checks `body'` (the badly rebuilt `body`), the check would fail, as
 `inst'` does not have the type `Group G` that `MonoidHom.mk'._proof_1` requires it to have. This in
-turn would make `verifyWeakening` reject the weakening.
+turn would make `weakeningResynthesizable` reject the weakening.
 
 In short, unfolding the applications of these dynamically generated constants is important because
 any declaration whose elaboration produces them would otherwise be falsely restricted to whatever
@@ -403,34 +403,36 @@ otherwise, returns `false`.
 ---
 **Implementation notes**
 
-`verifyWeakening …` does not imply `(recompiledAgainst? …).isSome`, nor the other way around:
-
-| `verifyW…` | `recompiledA…` | % of cands | `WeakeningGrade` |
-|:---     |:---     |:--- |:--- |
-| `true`  | `true`  | ≈?% | `WeakeningGrade.holds true true true` |
-| `true`  | `false` | ≈?% | `WeakeningGrade.holds ? ? ?` |
-| `false` | `true`  | ≈0% | `WeakeningGrade.holds true true true` |
-| `false` | `false` | ≈?% | N/A; weakening is not valid |
-
-#TODO
-
-For example, the weakening candidate `[Group G] ↝ [MulOneClass M]` demonstrates each possible case
-through the four theorems below (note that, for theorem `ff`, the candidate wouldn't have been
-generated in the first place):
+`weakeningResynthesizable …` does not imply `(recompiledAgainst? …).isSome`, nor the other way
+around: For example, the weakening candidate `[Group G] ↝ [MulOneClass M]` demonstrates each
+possible case through the four theorems below:
 
 ```
 variable {G : Type} [inst : Group G] (a : G)
+-- `weakeningResynthesizable` returns `true`, `(recompiledAgainst? …).isSome` returns `true`
 theorem tt : a * 1 = a := mul_one a
+-- `weakeningResynthesizable` returns `true`, `(recompiledAgainst? …).isSome` returns `false`
 theorem tf : a * 1 = a := @mul_one G inst.toDivInvMonoid.toMonoid.toMulOneClass a
+-- `weakeningResynthesizable` returns `false`, `(recompiledAgainst? …).isSome` returns `true`
 theorem ft : a * 1 = a := by first | exact tt | exact mul_one a
 
 class A (α : Type) where
 class B (α : Type) where n : Nat
 instance A.toB {α : Type} [A α] : B α := ⟨42⟩
+
+-- `weakeningResynthesizable` returns `false`, `(recompiledAgainst? …).isSome` returns `false`
 theorem ff {α : Type} [A α] : B.n α = 42 := rfl
 ```
+
+**Notes:**
+* For theorem `ff`, the candidate wouldn't have been generated in the first place.
+* We only actually call `weakeningResynthesizable` if `recompiledAgainst?` returned `none` and we're
+  working on the _first_ weakening candidate of a theorem (since `weakeningResynthesizable` replaces
+  only one binder, and two binder weakenings individually being resynthesizable does not guarantee
+  that they'd be resynthesizable jointly. In principle, nothing would prevent us from implementing a
+  joint resynthesizability check, but we'd be adding complexity for very small gains).
 -/
-public def verifyWeakening (ciType val : Expr) (n : Nat) (repls : Array Vertex) : MetaM Bool := do
+public def weakeningResynthesizable (ciType val : Expr) (n : Nat) (repls : Array Vertex) : MetaM Bool := do
   let holds? ← withWeakenedDecl ciType n repls fun ctx => do
     let body ← Core.betaReduce (mkAppN val ctx.args)
     let body' ← ctx.reSynthArg body

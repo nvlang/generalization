@@ -70,8 +70,8 @@ public partial def hasOmitWrapper (stx : Syntax) : Bool :=
   else (stx.getArg 0).getKind == ``Parser.Command.omit || hasOmitWrapper (stx.getArg 2)
 
 /--
-Peel any `open … in`, `set_option … in`, and "hole-less" `omit … in …` "wrappers" off of the main
-declaration. For example, if `stx` was
+Peel any `open … in`, `set_option … in`, `include … in …`, and `omit … in …` "wrappers" off of the
+main declaration. For example, if `stx` was
 
 ```
 open Nat in
@@ -82,8 +82,8 @@ omit [Monoid M] in
 
 then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all›],
 ‹@[instance] lemma something : … := …›)`. (Note that the `omit [Monoid M] in` wrapper is not among
-those returned; this is because we can safely ignore it. See `WrapperClassification.ignorable` for
-more information.)
+those returned; this is because we either ignore `omit`s entirely or, if `acceptOmits` is `false`
+(which it is by default), declarations with `omit`s are skipped by the linter altogether.)
 
 If the declaration includes any other wrappers (`omit … in …` with holes, `attribute … in …`,
 `include … in …`, etc.), return `none`. This is because `peelWrappers?`'s output is passed on to
@@ -155,8 +155,8 @@ The corresponding `Syntax` tree is:
 (See Lean/Parser/Command.lean, Lean/Parser/Term.lean, and Lean/Parser/Attr.lean for more information
 on the parentheticals in the tree above.)
 
-So `peelWrappers?` would return `some (wrappers, decl)`, where `wrappers` and `decl` are as indicated
-above.
+So `peelWrappers?` would return `some (wrappers, decl)`, where `wrappers` and `decl` are as
+indicated above.
 -/
 public partial def peelWrappers? (stx : Syntax) (wrappers : Array Syntax := #[]) :
     Option ((Array Syntax) × Syntax) :=

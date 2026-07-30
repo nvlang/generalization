@@ -45,7 +45,7 @@ public def suppressingDiagnostics {m : Type → Type} {α : Type} [Monad m] [Mon
 public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool :=
   suppressingDiagnostics do
     let some val := declInfo.value? (allowOpaque := true) | return false
-    try verifyWeakening declInfo.type val c.binder.idx c.replacements catch _ => return false
+    try weakeningResynthesizable declInfo.type val c.binder.idx c.replacements catch _ => return false
 
 
 /--
@@ -102,7 +102,7 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
   if binders.isEmpty then return #[]
   let chains ← getMIChains binders declInfo.type val
   let reqs ← getReqs binders chains
-  let mut candidates := lubCandidates G binders reqs config (includeSubsumers := config.subsumption)
+  let mut candidates := mcaCandidates G binders reqs config (includeSubsumers := config.subsumption)
   if config.conclusionGuard then
     candidates := refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
   if config.redundancyGuard then
@@ -156,6 +156,8 @@ val` if successful, or `none` otherwise.
 public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List Name := []) : TermElabM (Option Expr) :=
   suppressingDiagnostics do
   try withLevelNames ((← getLevelNames) ++ levelNames) do
+    -- `depth?` tells `Meta.forallBoundedTelescope` when to stop telescoping, so that `concl` may
+    -- actually match `src.concl?`.
     let attempt (depth? : Option Nat) : TermElabM (Option Expr) := try
         Meta.forallBoundedTelescope W depth? fun ys concl => do
           -- Re-elaborate value source code into `val`. Note that `elabTermAndSynthesize` benefits from
@@ -175,11 +177,15 @@ public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List N
     let some conclStx := src.concl? | return none
     let depth? ← try
         Meta.forallTelescope W fun ys _ => do
+          -- Elaborate conclusion syntax, which is our ground truth.
           let c ← withoutErrToSorry (elabTermAndSynthesize conclStx none)
           let rec foralls : Expr → Nat
             | .forallE _ _ b _ => foralls b + 1
             | _ => 0
+          -- ∀-arity of conclusion.
           let k := min (foralls c) ys.size
+          -- ∀-arity = 0 ⟹ we don't need to worry about `Meta.forallBoundedTelescope` having to stop
+          -- telescoping at any point.
           return if k == 0 then none else some (ys.size - k)
       catch _ => pure none
     let some depth := depth? | return none

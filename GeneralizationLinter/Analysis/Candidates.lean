@@ -43,10 +43,10 @@ public def Candidate.replacements (c : Candidate) : Array Vertex :=
 
 
 /--
-Things that we need to compute the least upper bounds, or things which may affect said computation,
-compiled into one structure.
+Things that we need to compute the minimal common ancestors, or things which may affect said
+computation, compiled into one structure.
 -/
-private structure LUBContext where
+private structure MCAContext where
   /-- Class graph. -/
   graph : ClassGraph
   /-- See `AbsencePolicy`. -/
@@ -57,10 +57,24 @@ private structure LUBContext where
   includeSubsumers : Bool
 
 
-/-- Returns `true` iff `u` reaches `v` in `ctx.graph`. -/
-def LUBContext.reachesV (ctx : LUBContext) (u v : Vertex) : Bool :=
-  (u.matchingVertices ctx.includeSubsumers).any fun u' =>
-    (v.matchingVertices ctx.includeSubsumers).any fun v' => ctx.graph.condensation.reaches u' v'
+/--
+If `ctx.includeSubsumers = true`:
+* Returns `true` iff `u` (or a subsumer thereof) reaches `v` (or a subsumer thereof) in `ctx.graph`.
+
+If `ctx.includeSubsumers = false`:
+* Returns `true` iff `u` reaches `v` in `ctx.graph`.
+* Note: if either of `u` or `v` (or both) are not in the class graph, then this function will
+  inevitably return `false` (even if `u = v`).
+
+---
+**Implementation notes**
+
+If `ctx.includeSubsumers = true`, then `ctx.reachesV (Monoid #0) (Monoid (MulOpposite #0)) = true`.
+
+-/
+def MCAContext.reachesV (ctx : MCAContext) (u v : Vertex) : Bool :=
+  (u.witnesses ctx.includeSubsumers).any fun u' =>
+    (v.witnesses ctx.includeSubsumers).any fun v' => ctx.graph.condensation.reaches u' v'
 
 /--
 Returns `true` iff `u` and `v` can be unified.
@@ -124,7 +138,7 @@ where
 
 
 /-- Return the data descendants of `v` in `ctx.graph` as an array `Array Vertex`. -/
-def LUBContext.dataDescendants (ctx : LUBContext) (v : Vertex) : Array Vertex :=
+def MCAContext.dataDescendants (ctx : MCAContext) (v : Vertex) : Array Vertex :=
   let cond := ctx.graph.condensation
   match cond.componentsMap[v]? with
   | none => #[]
@@ -169,23 +183,25 @@ Retrieved from [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-
   safely split the `IsLinearOrder` hypothesis up, because the instances of `Std.Refl` that
   `IsPreorder` and `Std.Total` each use are guaranteed to be equal due to proof irrelevance.
 -/
-def LUBContext.sharesDataDesc (ctx : LUBContext) (u v : Vertex) : Bool :=
-  (u.matchingVertices ctx.includeSubsumers).any fun u' =>
+def MCAContext.sharesDataDesc (ctx : MCAContext) (u v : Vertex) : Bool :=
+  (u.witnesses ctx.includeSubsumers).any fun u' =>
     let descsᵤ := ctx.dataDescendants u'
-    (v.matchingVertices ctx.includeSubsumers).any fun v' =>
+    (v.witnesses ctx.includeSubsumers).any fun v' =>
       let descsᵥ := ctx.dataDescendants v'
       descsᵤ.any fun dᵤ => descsᵥ.any (Vertex.unifiable dᵤ ·)
 
 /--
 Applies two filters to `reqVerts` and returns the result. The filters are:
-* Every bvar of a requirement's `pattern` must be substitutable by the binder's carriers.
-* Requirements that are descendants of other requirements are redundant and hence dropped.
+1.  Every bvar of a requirement's `pattern` must be substitutable via the binder's `Key.subst`.
+2.  Requirements that are strictly weaker than another requirement are dropped.
 -/
-def LUBContext.filterReqVerts (ctx : LUBContext) (b : TargetedBinder)
+def MCAContext.filterReqVerts (ctx : MCAContext) (b : TargetedBinder)
     (reqVerts : HashSet Vertex) : Array Vertex :=
-  let byArity := reqVerts.toArray.filter (fun v => v.pattern.all (·.looseBVarRange ≤ b.subst.size))
-  byArity.filter fun u =>
-    ¬ byArity.any fun v => v != u && ctx.reachesV v u && ¬ ctx.reachesV u v
+  -- Filter 1.
+  let reqVerts' := reqVerts.toArray.filter (fun v => v.pattern.all (·.looseBVarRange ≤ b.subst.size))
+  -- Filter 2.
+  reqVerts'.filter fun u =>
+    ¬ reqVerts'.any fun v => v != u && ctx.reachesV v u && ¬ ctx.reachesV u v
 
 
 /--
@@ -197,7 +213,7 @@ def sccDemotedHeads : List Name := [`NSMul, `ZSMul, `NPow, `ZPow, `OfNat, `Trans
 /--
 The deterministic "algorithm" by which we pick representatives when `sccDemotedHeads` doesn't
 already force our decision. We also use this to choose a minimal common ancestor when
-`LUBContext.lub` would otherwise return multiple.
+`MCAContext.mca` would otherwise return multiple.
 -/
 def pick (vertices : Array Vertex) : Option Vertex :=
   vertices.foldl (init := none) fun best v => match best with
@@ -213,69 +229,144 @@ def sccRepresentative (scc : Array Vertex) : Option Vertex :=
 
 
 /--
-Returns the least upper bound (LUB) of `reqs` in `ctx.graph.condensation`, if a unique LUB exists.
-Otherwise, returns `none`.
+Returns a minimal common ancestor (MCA) of `reqVerts` in `ctx.graph.condensation`.
+
+---
+**Implementation notes**
+
+`reqVerts` contains "vertices", but they're not necessarily in the class graph; they're just
+applications canonicalized to `Vertex` so that we can query the class graph with them. We call these
+vertices "witnesses", as each one represents a "witness" for a specific requirement of a theorem.
+
+If any `reqVert` in `reqVerts` happened to canonicalize to a `Vertex` that isn't actually in the
+class graph (which may well be the case, as the class graph has strict inclusion criteria (and even
+if it didn't it's still just based off of registered instances, and a theorem can have class
+applications of whatever kind it wants)), `minCommonAncestors` would query the class graph for
+`reqVert` (via `reqVerts.map condensation.indicesOf`) and find nothing, which `minCommonAncestors`
+doesn't like because it essentially means that there's a requirement that it can't take into
+account, i.e., that is "absent" from the class graph. When `AbsencePolicy` is `failClosed`, which is
+its default, then that means `minCommonAncestors` will just play it safe and return `#[]`. But even
+if `AbsencePolicy` were `failOpenGuarded` it wouldn't fix our problems, as `minCommonAncestors` in
+that case could easily return an ancestor which doesn't satisfy the unaccounted-for requirement,
+which would then just lead to the verification pipeline rejecting the suggestion, costing us time
+and quite possibly recall.
+
+So instead what we do is expand `reqVert` into a set `{req, subsumer₁, …, subsumerₙ}` of `Vertex`
+records (which in this context we call "witnesses"; see also `minCommonAncestors`'s docstring) which
+includes any subsumer of `reqVert`. These subsumers aren't guaranteed to match a class graph vertex
+either, but it significantly increases our chances, and is still perfectly sound because any
+ancestor that satisfies a subsumer of `reqVert` would also satisfy `reqVert`.
+
+**Example:** If `reqVert` is `Membership #0 (Submodule #1 #0)` (a real requirement of
+`Submodule.span_range_subtype_eq_top_iff`), then just querying the class graph for `reqVert` would
+return nothing; `reqVert` is simply not _in_ the class graph. Meanwhile, if we first expanded
+`reqVert` to `reqVert.witnesses = #[reqVert, Membership #0 #1]`, we'd find that `Membership #0 #1`
+_is_ a vertex of the class graph and hence something that `minCommonAncestors` can use. Finally, an
+ancestor which satisfies `Membership #0 #1` is also guaranteed to satisfy `Membership #0 (Submodule
+#1 #0)` (note that the `#0` etc. are bvars, meaning that the `#0` in `Membership #0 #1` does _not_
+have to refer to the same thing as the `#0` in `Membership #0 (Submodule #1 #0)`). In this specific
+case, this corresponds to the intuition that, if something can define `∈` between _any_ two things,
+it can surely define it between `α` and `Submodule β α` for any `α β : Type*`.
+
+**Note:** `reqVert.witnesses` also helps out with universe polymorphism; if `reqVert` is pinned to
+some specific universes, it's rather unlikely that it'll be a vertex in the class graph, but
+`reqVert.witnesses` also returns `Vertex` records which correspond to `reqVert` or one of its
+subsumers in every way except also being universe polymorphic.
+
+**See also:** `minCommonAncestors`.
 -/
-def LUBContext.lub (ctx : LUBContext) (b : TargetedBinder) (reqs : Array Vertex) :
+def MCAContext.minCommonAncestor (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option Vertex :=
   -- De-duplicate, and include vertices that match requirements too if `includeSubsumers` is `true`,
-  -- converting `reqs` into an array of sets, which will be interpreted by `minCommonAncestors` as
-  -- an AND of ORs to satisfy.
-  let reqs := reqs.map (fun req => HashSet.ofArray (req.matchingVertices ctx.includeSubsumers))
-  let mca := (ctx.graph.condensation.minCommonAncestors reqs ctx.absencePolicy).filter fun scc =>
-    scc[0]?.any (ctx.reachesV b.toVertex ·)
-  match mca with
+  -- converting `reqVerts` into an array of sets, which will be interpreted by `minCommonAncestors`
+  -- as an AND of ORs to satisfy.
+  let witnessSets := reqVerts.map
+    fun reqVert => HashSet.ofArray (reqVert.witnesses ctx.includeSubsumers)
+  -- Make sure that
+  let mcas := (ctx.graph.condensation.minCommonAncestors witnessSets ctx.absencePolicy).filter
+    fun scc => scc[0]?.any (ctx.reachesV b.toVertex ·)
+  match mcas with
   | #[] => none
   | #[scc] => sccRepresentative scc
-  -- #TODO (low priority): If `mca` has size ≥2, it means there's multiple incomparable minimal
+  -- #TODO (low priority): If `mcas` has size ≥2, it means there's multiple incomparable minimal
   -- common ancestors, each of which single-handedly satisfies all requirements (see
-  -- `minCommonAncestors`'s docstring for an example). Instead of dropping them all and pretending
-  -- there's no possible weakenings, we could try to simply present them as multiple viable options
-  -- (after verifying them, of course). For now, we just pick one ancestor from `mca` according to
-  -- the deterministic procedure implemented by `pick` and go with that. This shouldn't happen all
-  -- that often anyway, so any further improvements here should be considered relatively
-  -- low-priority.
+  -- `minCommonAncestors`'s docstring for an example). We could try to simply present them as
+  -- multiple viable options (after verifying them, of course). For now, we just pick one ancestor
+  -- from `mcas` according to the deterministic procedure implemented by `pick` and go with that.
+  -- This shouldn't happen all that often anyway, so any further improvements here should be
+  -- considered relatively low-priority.
   | sccs => pick (sccs.filterMap sccRepresentative)
 
 /-- Is `v` strictly weaker than `b` according to `ctx.graph`? -/
-def LUBContext.strictlyWeaker (ctx : LUBContext) (b : TargetedBinder) (v : Vertex) :
+def MCAContext.strictlyWeaker (ctx : MCAContext) (b : TargetedBinder) (v : Vertex) :
     Bool :=
   let bVertex := b.toVertex
   v != bVertex && ctx.reachesV bVertex v && ¬ ctx.reachesV v bVertex
 
 
 /--
-Partition `reqs` into non-data-descendant-sharing blocks and return the LUBs of the blocks as an
-array, or `none` if `reqs` can't be split up, or if any of the blocks don't have a LUB, or if any of
-the blocks' LUBs are not strictly weaker than `b` (in which case we'd be e.g. replacing `[Group G]`
-with `[Group G] […]`, which would be pointless).
+Partition `reqVerts` into non-data-descendant-sharing blocks and return the MCAs of the blocks as an
+array, or `none` if `reqVerts` can't be split up, or if any of the blocks don't have a MCA, or if
+any of the blocks' MCAs are not strictly weaker than `b` (in which case we'd be e.g. replacing
+`[Group G]` with `[Group G] […]`, which would be pointless).
+
+**Note:** This function only ever gets called when `splitPolicy` is `"allow"` or `"prefer"`.
 -/
-def LUBContext.lubsPartition (ctx : LUBContext) (b : TargetedBinder) (reqs : Array Vertex) :
+def MCAContext.mcasPartition (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option (Array Vertex) := Id.run do
-  let blocks := partitionByDesc (HashSet.ofArray reqs) ctx.sharesDataDesc
-  if blocks.size ≤ 1 then return none -- If `reqs` can't be split up, return `none`.
-  let mut lubs : Array Vertex := #[]
+  let blocks := partitionByDesc (HashSet.ofArray reqVerts) ctx.sharesDataDesc
+  if blocks.size ≤ 1 then return none -- If `reqVerts` can't be split up, return `none`.
+  let mut mcas : Array Vertex := #[]
   for block in blocks do
-    let some lub := ctx.lub b block.toArray | return none
-    unless ctx.strictlyWeaker b lub do return none
-    -- #TODO: The below is a stopgap measure to ensure we don't emit duplicates. The real fix is
-    -- improving the subsumption vertex matching mechanism that causes them. With the stopgap in
-    -- place, it should at least just be about recall though.
-    unless lubs.contains lub do lubs := lubs.push lub
-  -- `partitionByDesc` partitioned the requirements, but that doesn't mean that the LUBs, which are
+    let some mca := ctx.minCommonAncestor b block.toArray | return none
+    unless ctx.strictlyWeaker b mca do return none
+    -- `mcas` may contain duplicates. Consider the following example: `IsAlmostIntegral.coeff`'s
+    -- `[IsDomain R]` binder has three requirements imposed on it: `Nontrivial #0`, `NoZeroDivisors
+    -- #0`, and `NoZeroDivisors (Polynomial #0)`. Now, first, we partition these three requirements
+    -- into `blocks`; since none of them share a data descendant with any of the other (they're all
+    -- `Prop`-valued), we get three distinct blocks, and hence will call `minCommonAncestor` three
+    -- times. Now, within `minCommonAncestor`, each member of each block is expanded into a witness
+    -- set:
+    -- * `ctx.minCommonAncestor {Nontrivial #0} = ctx.graph.condensation.minCommonAncestors
+    --   #[{Nontrivial #0}] = #[#[Nontrivial #0]]`,
+    -- * `ctx.minCommonAncestor {NoZeroDivisors #0} = ctx.graph.condensation.minCommonAncestors
+    --   #[{NoZeroDivisors #0}] = #[#[NoZeroDivisors #0]]`,
+    -- * `ctx.minCommonAncestor {NoZeroDivisors #0} = ctx.graph.condensation.minCommonAncestors
+    --   #[{NoZeroDivisors (Polynomial #0), NoZeroDivisors #0}] = #[#[NoZeroDivisors #0]]`
+    --   (`NoZeroDivisors (Polynomial #0)` is not a graph vertex).
+    --
+    -- Supposing that the above is the order in which the `for block in blocks` loop above processed
+    -- these, its third iteration would, at this exact point, have `mcas = #[Nontrivial #0,
+    -- NoZeroDivisors #0]` and `mca = NoZeroDivisors #0`, and so, without this `mcas.contains mca`
+    -- check here, we'd add `mca` to `mcas` once more and produce `#[Nontrivial #0, NoZeroDivisors
+    -- #0, NoZeroDivisors #0]`. Now, since all these are `Prop`-valued, the `sharesDataDesc` check
+    -- below wouldn't flag this either, and so we'd propose the weakening candidate `[IsDomain R] ↝
+    -- [Nontrivial R] [NoZeroDivisors R] [NoZeroDivisors R]`, which happens to pass verification and
+    -- hence this weakening candidate would turn into a weakening _suggestion_ and be logged for the
+    -- user. Now, the suggestion is technically perfectly valid, but the redundancy of the
+    -- duplicated binder is poignant and certainly not desirable.
+    --
+    -- There were four such suggestions emitted over all of Mathlib in an older sweep that didn't
+    -- have this check: `IsAlmostIntegral.coeff`,
+    -- `Polynomial.eq_of_dvd_of_natDegree_le_of_leadingCoeff`,
+    -- `WeierstrassCurve.Affine.irreducible_polynomial`, and `BoundedOrder.instSubsingleton`. (Note
+    -- that this duplicate check is only one of several code changes that have been implemented
+    -- since that sweep, so only removing this check here might not produce this exact same result.
+    -- We are mostly just enumerating them here as a curiosity.)
+    unless mcas.contains mca do mcas := mcas.push mca
+  -- `partitionByDesc` partitioned the requirements, but that doesn't mean that the MCAs, which are
   -- "further up" than the requirements, couldn't have shared data descendants now. So we need to
   -- check. As always, this check is incomplete, due to our graph not encoding hyperedges.
-  for i in [0:lubs.size] do
-    for j in [i+1:lubs.size] do
-      if ctx.sharesDataDesc lubs[i]! lubs[j]! then return none
-  return some lubs
+  for i in [0:mcas.size] do
+    for j in [i+1:mcas.size] do
+      if ctx.sharesDataDesc mcas[i]! mcas[j]! then return none
+  return some mcas
 
 
 /--
-Returns `true` if the `v.pattern ⊆ b.pattern`, assuming that `v` was computed via `ctx.replacement?
-b`.
+Returns `true` if `v.pattern ⊆ b.pattern` (assuming that `v` was computed via `ctx.replacement? b`).
 -/
-def LUBContext.preservesKeyArgsOf (_ctx : LUBContext) (b : TargetedBinder) (v : Vertex) : Bool :=
+def MCAContext.preservesKeyArgsOf (_ctx : MCAContext) (b : TargetedBinder) (v : Vertex) : Bool :=
   v.pattern.all fun arg => arg.isBVar || !arg.hasLooseBVars || b.toVertex.pattern.contains arg
 
 
@@ -283,29 +374,29 @@ def LUBContext.preservesKeyArgsOf (_ctx : LUBContext) (b : TargetedBinder) (v : 
 What might we replace `b` with, given that `b` requires (or, more accurately, uses) `reqVerts`?
 
 This returns
-* `some #[lub]` to indicate that `b` could be replaced by `lub`,
-* `some #[lub₁, …, lubₙ]` to indicate that `b` could be split up into `lub₁`, …, `lubₙ`, or
+* `some #[mca]` to indicate that `b` could be replaced by `mca`,
+* `some #[mca₁, …, mcaₙ]` to indicate that `b` could be split up into `mca₁`, …, `mcaₙ`, or
 * `none` to indicate that `b` can't be weakened within `ctx.graph` under the constraints defined by
   `ctx.splitPolicy`, `ctx.absencePolicy`, and `ctx.includeSubsumers`.
 -/
-def LUBContext.replacement? (ctx : LUBContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
+def MCAContext.replacement? (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option (Array Vertex) :=
   if reqVerts.isEmpty then some #[] else
-  let singleClass? : Option Vertex := (ctx.lub b reqVerts).filter (ctx.strictlyWeaker b)
+  let singleClass? : Option Vertex := (ctx.minCommonAncestor b reqVerts).filter (ctx.strictlyWeaker b)
   match ctx.splitPolicy with
   | .forbid => singleClass?.map (#[·])
   | .allow =>
     match singleClass? with
-    | some lub => some #[lub]
-    | none => ctx.lubsPartition b reqVerts
+    | some mca => some #[mca]
+    | none => ctx.mcasPartition b reqVerts
   | .prefer =>
-    match ctx.lubsPartition b reqVerts, singleClass? with
-    | some lubs, some lub =>
-      -- If any of the `lubᵢ` is stronger than or equipotent to `lub`, then there's no point in
-      -- splitting `b` up, so we just return `#[lub]` in that case.
-      some (if lubs.all (fun lubᵢ => ¬ ctx.reachesV lubᵢ lub) then lubs else #[lub])
-    | some lubs, none => some lubs
-    | none, some lub => some #[lub]
+    match ctx.mcasPartition b reqVerts, singleClass? with
+    | some mcas, some mca =>
+      -- If any of the `mcaᵢ` is stronger than or equipotent to `mca`, then there's no point in
+      -- splitting `b` up, so we just return `#[mca]` in that case.
+      some (if mcas.all (fun mcaᵢ => ¬ ctx.reachesV mcaᵢ mca) then mcas else #[mca])
+    | some mcas, none => some mcas
+    | none, some mca => some #[mca]
     | none, none => none
 
 
@@ -313,32 +404,31 @@ def LUBContext.replacement? (ctx : LUBContext) (b : TargetedBinder) (reqVerts : 
 Return a (possibly empty) array of candidate weakenings for any of the targeted binders `binders`
 such that the requirements `reqs` are still satisfied.
 -/
-public def lubCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
+public def mcaCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
     (reqs : Array Requirement) (cfg : LinterConfig := {}) (includeSubsumers : Bool := true) :
     Array Candidate := Id.run do
-  let ctx : LUBContext :=
+  let ctx : MCAContext :=
     { graph, absencePolicy := cfg.absencePolicy, splitPolicy := cfg.splitPolicy, includeSubsumers }
   let mut out : Array Candidate := #[]
   for b in binders do
     let bReqVerts : HashSet Vertex := reqs.foldl (init := {}) fun bReqVerts' req =>
       if req.binder.fvar == b.fvar then bReqVerts'.insert req.toVertex else bReqVerts'
-    let some lubs := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
-    -- Subsumption can sometimes (≈10% of emissions) lead to key args getting "modified": for
-    -- example, `α` in the targeted binder becoming `αᵒᵖ` in the weakening candidate. Sometimes
-    -- this can be genuinely desirable, but most of the time it's not, so, for the time being,
-    -- we just try again with subsumption off if we are met with such a situation.
-    -- #TODO: Improving the vertex matching mechanism should, well, "subsume" this ad hoc fix.
-    let lubs :=
-      if lubs.all (ctx.preservesKeyArgsOf b) then
-        lubs
+    let some mcas := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
+    -- Subsumption can sometimes lead to key args getting "modified": for example, `α` in the
+    -- targeted binder becoming `αᵒᵖ` in the weakening candidate. Sometimes this can be genuinely
+    -- desirable, but most of the time it's not, so, for the time being, we just try again with
+    -- subsumption off if we are met with such a situation.
+    let mcas :=
+      if mcas.all (ctx.preservesKeyArgsOf b) then
+        mcas
       else
         let ctxOff := { ctx with includeSubsumers := false }
         match ctxOff.replacement? b (ctxOff.filterReqVerts b bReqVerts) with
-        | some alt => if alt.all (ctxOff.preservesKeyArgsOf b) then alt else lubs
-        | none => lubs
-    let shape := match lubs with
+        | some alt => if alt.all (ctxOff.preservesKeyArgsOf b) then alt else mcas
+        | none => mcas
+    let shape := match mcas with
       | #[] => WeakeningShape.drop
-      | #[lub] => WeakeningShape.weaken lub
-      | lubs => WeakeningShape.split lubs
+      | #[mca] => WeakeningShape.weaken mca
+      | mcas => WeakeningShape.split mcas
     out := out.push { binder := b, shape }
   return out
