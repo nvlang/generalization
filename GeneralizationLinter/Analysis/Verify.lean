@@ -172,7 +172,11 @@ public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List N
           if val.hasSorry || val.hasExprMVar then return none
           discard <| Meta.check val
           return some val
-      catch _ => return none
+      -- We don't want a timeout here to lead to a claim that "the body would have to be modified"
+      -- (we don't know whether that's true or not at this point), but rather just to dropping the
+      -- candidate altogether. We'd rather be quiet than emit suggestions with possibly false claims
+      -- attached to them.
+      catch e => if e.isRuntime then throw e else return none
     if let some val ← attempt none then return some val
     let some conclStx := src.concl? | return none
     let depth? ← try
@@ -187,10 +191,13 @@ public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List N
           -- ∀-arity = 0 ⟹ we don't need to worry about `Meta.forallBoundedTelescope` having to stop
           -- telescoping at any point.
           return if k == 0 then none else some (ys.size - k)
-      catch _ => pure none
+      -- As before, a timeout here shouldn't be taken to mean that "the body would have to be
+      -- modified".
+      catch e => if e.isRuntime then throw e else return none
     let some depth := depth? | return none
     attempt (some depth)
-  catch _ => return none
+  -- As before, a timeout here shouldn't be taken to mean that "the body would have to be modified".
+  catch e => if e.isRuntime then throw e else return none
 
 
 /--
