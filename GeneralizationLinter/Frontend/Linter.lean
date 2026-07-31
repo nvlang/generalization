@@ -269,22 +269,22 @@ For each command that `linter.run` is called on, it figures out whether it shoul
 `lintTypeclassesFor` and, if so, sets up the `DeclSource` record that they'll need and builds (or
 fetches from cache) the typeclass graph.
 -/
-public def linter : Linter where
+public def generalizeTypeclasses : Linter where
   -- `withSetOptionIn` peels off leading `set_option … in` commands. However, in our docstring
   -- example, it would only peel off `set_option A true in`, and not `set_option C true in`, because
   -- of the `open B in` between them. So `peelWrappers?` still needs to handle `set_option`s as
   -- well.
-  run := withSetOptionIn fun stx => do
-    -- `declCmd` is `stx` with all the leading `set_option … in`, `open … in`, `omit … in`, and
+  run := withSetOptionIn fun cmd => do
+    -- `declCmd` is `cmd` with all the leading `set_option … in`, `open … in`, `omit … in`, and
     -- `include … in` removed; see `peelWrappers?`.
-    let some (wrappers, declCmd) := peelWrappers? stx | return
+    let some (wrappers, declCmd) := peelWrappers? cmd | return
     let some effectiveOpts ← wrapperEffectiveOptions? wrappers | return
     let lintOpts ← Command.withScope (fun s => { s with opts := effectiveOpts }) getLinterOptions
     -- Is the typeclass linter on?
     let tcOn := getLinterValue linter.generalizeTypeclasses lintOpts
     unless tcOn do return
     let sectionBinders := (← getScope).varDecls.map (·.raw)
-    let omitTouched := hasOmitWrapper stx || !(← getScope).omittedVars.isEmpty
+    let omitTouched := hasOmitWrapper cmd || !(← getScope).omittedVars.isEmpty
     let acceptOmits := generalizeTypeclasses.acceptOmits.get effectiveOpts
     let declVals := declValNodes declCmd
     let tcSuppressed := (omitTouched && !acceptOmits) ||
@@ -351,4 +351,4 @@ public def linter : Linter where
                 ("emits", Json.arr emits)]).compress}"
 
 
-initialize addLinter linter
+initialize addLinter generalizeTypeclasses

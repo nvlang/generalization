@@ -93,8 +93,7 @@ deriving Inhabited
 
 public register_option linter.generalizeTypeclasses : Bool := {
     defValue := false,
-    descr := "flag non-explicit typeclass hypotheses that could be weakened in-place without
-      requiring further modifications."
+    descr := "flag theorems with non-explicit typeclass hypotheses that could be weakened."
 }
 
 public register_option generalizeTypeclasses.split : String := {
