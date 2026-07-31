@@ -113,8 +113,8 @@ Given a head constant `head`, return a boolean mask `#[b₁ … bₙ]` (`bᵢ : 
 `head` into a `Key` or into an entry of a different `Key`'s `pattern`. Note that `keySlots` is used
 not only for classes, but for all kinds of type formers.
 
-Explicit slots are always kept, instance implicit slots are always dropped, and implicit and strict
-implicit slots are dropped only if their values are recoverable from the values of the kept slots.
+Instance implicit slots are always dropped, while other slots are dropped only if their values are
+recoverable from the values of the kept slots.
 
 ---
 **Examples**
@@ -125,9 +125,9 @@ keySlots `Module = #[true, true, false, false]
 -- class Small (α : Type*)
 keySlots `Small = #[true]
 -- structure Subtype {α : Sort u} (p : α → Prop)
-keySlots `Subtype = #[true, true]
+keySlots `Subtype = #[false, true]
 -- class IsWellFounded (α : Type*) (r : α → α → Prop)
-keySlots `IsWellFounded = #[true, true]
+keySlots `IsWellFounded = #[false, true]
 -- structure Submodule (R M : Type*) [Semiring R] [AddCommMonoid M] [Module R M]
 keySlots `Submodule = #[true, true, false, false, false]
 ```
@@ -142,13 +142,11 @@ def keySlots (head : Name) : MetaM (Array Bool) := do
     let binderTypes : Array Expr := decls.map (·.type.cleanupAnnotations)
     let mut keep : Array Bool := #[]
     for i in [0:params.size] do
-      if binderInfos[i]!.isExplicit then
-        keep := keep.push true -- explicit params are always kept
-      else if binderInfos[i]!.isInstImplicit then
+      if binderInfos[i]!.isInstImplicit then
         keep := keep.push false -- instance implicit params are always dropped
       else
-        -- implicit or strict implicit params: drop only if recoverable from the
-        -- type of a non-instance-implicit binder that follows it in the telescope.
+        -- explicit, implicit, or strict implicit params: drop only if recoverable from the type of
+        -- a non-instance-implicit binder that follows it in the telescope.
         let fvar := params[i]!.fvarId!
         let recoverable := (List.range params.size).any fun j =>
           j > i && !binderInfos[j]!.isInstImplicit && recoverableFrom fvar binderTypes[j]!
