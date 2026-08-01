@@ -1,0 +1,61 @@
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  pages: write
+
+# Serialises Pages deploys so two runs cannot interleave uploads. Not `cancel-in-progress`:
+# cancelling mid-deploy half-publishes the site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lean
+        uses: leanprover/lean-action@v1
+        with:
+          test: false
+          lint: false
+          use-github-cache: true
+
+      # `docbuild/` is a committed sub-project (see docbuild/lakefile.toml); building its `:docs`
+      # facet runs doc-gen4 and writes the API reference to `docbuild/doc`.
+      - name: Build docs
+        working-directory: docbuild
+        run: lake build --keep-toolchain -q GeneralizationLinter:docs
+
+      # `deploy-pages` replaces the WHOLE site, so publishing an incomplete build deletes pages that
+      # are already live -- which is how the site lost every project page while the workflow
+      # reported success. Fail before publishing rather than after.
+      - name: Check every module has a page
+        run: |
+          rc=0
+          # `git ls-files`, not `find`: the working tree also holds `_`-prefixed scratch modules,
+          # which .gitignore excludes and doc-gen4 therefore never emits pages for.
+          while IFS= read -r m; do
+            page="docbuild/doc/${m%.lean}.html"
+            [ -s "$page" ] || { echo "::error::missing $page"; rc=1; }
+          done < <(git ls-files -- 'GeneralizationLinter.lean' 'GeneralizationLinter/**/*.lean')
+          [ "$rc" = 0 ] || echo "::error::refusing to deploy an incomplete site"
+          exit $rc
+
+      # Nested under `docs/` so the published URLs are unchanged.
+      - name: Assemble the site
+        run: mkdir -p site && cp -r docbuild/doc site/docs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - uses: actions/deploy-pages@v4

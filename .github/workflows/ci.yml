@@ -1,14 +1,9 @@
-name: Build project and docs
+name: Build project
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
-  pages: write
 
 jobs:
   build:
@@ -20,6 +15,3 @@ jobs:
 
       - name: Build project
         uses: leanprover/lean-action@v1
-
-      - name: Generate documentstion
-        uses: leanprover-community/docgen-action@main

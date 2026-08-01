@@ -1,0 +1,21 @@
+# Documentation sub-project, following the pattern Batteries uses (`docs/lakefile.toml` there): a
+# separate Lake package requiring this one plus `doc-gen4`, so generating the API reference never
+# perturbs the library's own build. `buildDir = "."` puts the generated site in `docbuild/doc`.
+#
+# `packagesDir` points at the root package's dependencies, so Mathlib is shared rather than fetched
+# twice; `lake build` here resolves `doc-gen4` into that same directory.
+name = "docbuild"
+reservoir = false
+packagesDir = "../.lake/packages"
+buildDir = "."
+
+[[require]]
+scope = "leanprover"
+name = "doc-gen4"
+# Pinned to the tag matching `lean-toolchain`, which resolves to the same commit
+# (4df39adb) that `docgen-action` selected by the same rule. Bump alongside the toolchain.
+rev = "v4.32.1"
+
+[[require]]
+name = "generalization-linter"
+path = ".."
