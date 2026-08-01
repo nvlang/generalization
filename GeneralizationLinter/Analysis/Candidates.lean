@@ -118,7 +118,7 @@ where
     | e, .bvar i =>
       -- Examples: `.bvar 0, .bvar 1`, `ℕ, .bvar 1`, etc.
       match σ[i]? with -- Is `.bvar i` constrained?
-      -- Yes ⟹ Unfold `.bvar i` to whatever its constrained to and check `e` against that.
+      -- Yes ⟹ Unfold `.bvar i` to whatever it's constrained to and check `e` against that.
       | some t => unifyPatterns σ t e
       -- No ⟹ `.bvar i` is not constrained (thus far).
       | none =>
@@ -228,14 +228,14 @@ def pick (vertices : Array Vertex) : Option Vertex :=
 Deterministically picks a vertex within a given SCC, avoiding any vertex whose `Vertex.name` is in
 `sccDemotedHeads`.
 -/
-def sccRepresentative (scc : Array Vertex) : Option Vertex :=
+def sccRepresentative? (scc : Array Vertex) : Option Vertex :=
   pick (scc.filter fun v => !sccDemotedHeads.contains v.name) <|> pick scc
 
 
 /--
 Returns a minimal common ancestor (MCA) of `reqVerts` in `ctx.graph.condensation` which `b` can
 reach. If none exists, returns `none`. If more than one such MCA exists, uses `pick` to tie-break
-incomparable MCAs, and `sccRepresentative` to tie-break the comparable ones (which will inevitably
+incomparable MCAs, and `sccRepresentative?` to tie-break the comparable ones (which will inevitably
 be equipotent).
 
 ---
@@ -283,7 +283,7 @@ subsumers in every way except also being universe polymorphic.
 
 **See also:** `minCommonAncestors`.
 -/
-def MCAContext.minCommonAncestor (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
+def MCAContext.minCommonAncestor? (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option Vertex :=
   -- De-duplicate, and include vertices that match requirements too if `includeSubsumers` is `true`,
   -- converting `reqVerts` into an array of sets, which will be interpreted by `minCommonAncestors`
@@ -296,7 +296,7 @@ def MCAContext.minCommonAncestor (ctx : MCAContext) (b : TargetedBinder) (reqVer
     fun scc => scc[0]?.any (ctx.reachesV b.toVertex ·)
   match mcas with
   | #[] => none
-  | #[scc] => sccRepresentative scc
+  | #[scc] => sccRepresentative? scc
   -- #TODO (low priority): If `mcas` has size ≥2, it means there's multiple incomparable minimal
   -- common ancestors, each of which single-handedly satisfies all requirements (see
   -- `minCommonAncestors`'s docstring for an example). We could try to simply present them as
@@ -304,7 +304,7 @@ def MCAContext.minCommonAncestor (ctx : MCAContext) (b : TargetedBinder) (reqVer
   -- from `mcas` according to the deterministic procedure implemented by `pick` and go with that.
   -- This shouldn't happen all that often anyway, so any further improvements here should be
   -- considered relatively low-priority.
-  | sccs => pick (sccs.filterMap sccRepresentative)
+  | sccs => pick (sccs.filterMap sccRepresentative?)
 
 /-- Is `v` strictly weaker than `b` according to `ctx.graph`? -/
 def MCAContext.strictlyWeaker (ctx : MCAContext) (b : TargetedBinder) (v : Vertex) :
@@ -324,27 +324,27 @@ array, or `none` if
 
 **Note:** This function only ever gets called when `splitPolicy` is `"allow"` or `"prefer"`.
 -/
-def MCAContext.mcasPartition (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
+def MCAContext.mcasPartition? (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option (Array Vertex) := Id.run do
   let blocks := partitionByDesc (HashSet.ofArray reqVerts) ctx.sharesDataDesc
   if blocks.size ≤ 1 then return none -- If `reqVerts` can't be split up, return `none`.
   let mut mcas : Array Vertex := #[]
   for block in blocks do
-    let some mca := ctx.minCommonAncestor b block.toArray | return none
+    let some mca := ctx.minCommonAncestor? b block.toArray | return none
     unless ctx.strictlyWeaker b mca do return none
     -- `mcas` may contain duplicates. Consider the following example: `IsAlmostIntegral.coeff`'s
     -- `[IsDomain R]` binder has three requirements imposed on it: `Nontrivial #0`, `NoZeroDivisors
     -- #0`, and `NoZeroDivisors (Polynomial #0)`. Now, first, we partition these three requirements
     -- into `blocks`; since none of them share a data descendant with any of the other (they're all
-    -- `Prop`-valued), we get three distinct blocks, and hence will call `minCommonAncestor` three
-    -- times. Now, within `minCommonAncestor`, each member of each block is expanded into a witness
+    -- `Prop`-valued), we get three distinct blocks, and hence will call `minCommonAncestor?` three
+    -- times. Now, within `minCommonAncestor?`, each member of each block is expanded into a witness
     -- set:
     --
-    -- * `ctx.minCommonAncestor {Nontrivial #0} ≈ ctx.graph.condensation.minCommonAncestors
+    -- * `ctx.minCommonAncestor? {Nontrivial #0} ≈ ctx.graph.condensation.minCommonAncestors
     --   #[{Nontrivial #0}] = #[#[Nontrivial #0]]`,
-    -- * `ctx.minCommonAncestor {NoZeroDivisors #0} ≈ ctx.graph.condensation.minCommonAncestors
+    -- * `ctx.minCommonAncestor? {NoZeroDivisors #0} ≈ ctx.graph.condensation.minCommonAncestors
     --   #[{NoZeroDivisors #0}] = #[#[NoZeroDivisors #0]]`,
-    -- * `ctx.minCommonAncestor {NoZeroDivisors (Polynomial #0)} ≈
+    -- * `ctx.minCommonAncestor? {NoZeroDivisors (Polynomial #0)} ≈
     --   ctx.graph.condensation.minCommonAncestors #[{NoZeroDivisors (Polynomial #0), NoZeroDivisors
     --   #0}] = #[#[NoZeroDivisors #0]]` (`NoZeroDivisors (Polynomial #0)` is not a graph vertex).
     --
@@ -357,7 +357,7 @@ def MCAContext.mcasPartition (ctx : MCAContext) (b : TargetedBinder) (reqVerts :
     -- [Nontrivial R] [NoZeroDivisors R] [NoZeroDivisors R]`, which happens to pass verification and
     -- hence this weakening candidate would turn into a weakening _suggestion_ and be logged for the
     -- user. Now, the suggestion is technically perfectly valid, but the redundancy of the
-    -- duplicated binder is poignant and certainly not desirable.
+    -- duplicated binder is glaring and certainly not desirable.
     --
     -- There were four such suggestions emitted over all of Mathlib in an older sweep that didn't
     -- have this check: `IsAlmostIntegral.coeff`,
@@ -397,15 +397,15 @@ This returns
 def MCAContext.replacement? (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
     Option (Array Vertex) :=
   if reqVerts.isEmpty then some #[] else
-  let singleClass? : Option Vertex := (ctx.minCommonAncestor b reqVerts).filter (ctx.strictlyWeaker b)
+  let singleClass? : Option Vertex := (ctx.minCommonAncestor? b reqVerts).filter (ctx.strictlyWeaker b)
   match ctx.splitPolicy with
   | .forbid => singleClass?.map (#[·])
   | .allow =>
     match singleClass? with
     | some mca => some #[mca]
-    | none => ctx.mcasPartition b reqVerts
+    | none => ctx.mcasPartition? b reqVerts
   | .prefer =>
-    match ctx.mcasPartition b reqVerts, singleClass? with
+    match ctx.mcasPartition? b reqVerts, singleClass? with
     | some mcas, some mca =>
       -- If any of the `mcaᵢ` is stronger than or equipotent to `mca`, then there's no point in
       -- splitting `b` up, so we just return `#[mca]` in that case.

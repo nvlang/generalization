@@ -303,7 +303,7 @@ is used (via `subsumersGo`) by `subsumers`, which _does_.
 With this example, we have described what `bvarChoices #[ℕ, ℕ, ℤ] ℕ` does and returns. This also
 answers the following question:
 
-> If we want the first three arguments of `f ℕ ℕ ℤ ℕ` be abstracted to `.bvar 0`, `.bvar 1`, and
+> If we want the first three arguments of `f ℕ ℕ ℤ ℕ` to be abstracted to `.bvar 0`, `.bvar 1`, and
 > `.bvar 2`, respectively, what may we abstract the fourth argument to, and what would be the
 > resulting correspondence between bvar index and original argument value?
 
@@ -344,8 +344,8 @@ where
 
 /--
 Given the arguments `#[a₁, …, aₙ]` of an application `f a₁ … aₙ`, returns an exhaustive list (modulo
-reassignment of de Bruijn indices, i.e., e.g., we have `subsumers #[.bvar 2] = #[#[.bvar 0]]`
-instead of `#[#[.bvar 0], #[.bvar 1], #[.bvar 2], …]`) of all the arrays `#[p₁, …, pₙ]` for which we
+reassignment of de Bruijn indices, i.e., e.g., we have `subsumers #[.bvar 2] = [#[.bvar 0]]`
+instead of `[#[.bvar 0], #[.bvar 1], #[.bvar 2], …]`) of all the arrays `#[p₁, …, pₙ]` for which we
 have that `f p₁ … pₙ` subsumes `f a₁ … aₙ`.
 
 ---
@@ -361,7 +361,7 @@ subsumers #[.bvar 0, List (Nat × (.bvar 0)), .lit 42] = [
   #[.bvar 0, List (.bvar 1), 42]
   #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), .bvar 2]
   #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), 42]
-  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), #3]
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), .bvar 3]
   #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), 42]
   #[.bvar 0, List (Prod Nat (.bvar 0)), .bvar 1]
   #[.bvar 0, List (Prod Nat (.bvar 0)), 42]
@@ -374,12 +374,13 @@ partial def subsumers (args : Array Expr) : List (Array Expr) :=
   (subsumersGo #[] args.toList).map (·.1)
 
 /--
-If `i ≤ 8`, then `bell[i]` is the `i`th Bell number. If `i > 8`, then `bell[i]` is `2³²`.
+If `n ≤ 8`, then `bellClamped n` is the `n`th Bell number. If `n > 8`, then `bellClamped n` is
+`2³²`.
 
-Mathematically speaking, the $i$th Bell number is the number of possible partitions of a set of $i$
+Mathematically speaking, the $n$th Bell number is the number of possible partitions of a set of $n$
 elements.
 -/
-def bell (n : Nat) : Nat := #[1, 1, 2, 5, 15, 52, 203, 877, 4140].getD n (1 <<< 32)
+def bellClamped (n : Nat) : Nat := #[1, 1, 2, 5, 15, 52, 203, 877, 4140].getD n (1 <<< 32)
 
 /--
 The number of possible subsumers of an expression. If the expression is an application, then this
@@ -417,13 +418,13 @@ $$
   |\texttt{subsumers}(\texttt{args})|.
 $$
 
-**Note:** Our implementation of the $\texttt{bell}$ function returns `2³²` for inputs `>8`, so our
-computation of the bound is not mathematically faithful to the equation above when any of the `mult`
-is `>8`.
+**Note:** Our implementation of the $\texttt{bell}$ function (`bellClamped`) returns `2³²` for
+inputs `>8`, so our computation of the bound is not mathematically faithful to the equation above
+when any of the `mult` is `>8`.
 -/
 def enumBudget (args : Array Expr) : Nat :=
   let shapes := args.foldl (init := 1) fun shapes' arg => shapes' * shapeCount arg
-  let merges := (colorMults args).fold (init := 1) fun merges' _ k => merges' * bell k
+  let merges := (colorMults args).fold (init := 1) fun merges' _ k => merges' * bellClamped k
   shapes * merges
 
 
@@ -432,6 +433,9 @@ If the number of subsumers of `v.pattern` isn't estimated to exceed `maxCombined
 then all proper subsumers of `v.pattern` (i.e., subsumers of `v.pattern` that are not equal to
 `v.pattern`) are returned as an array of vertices, where each output vertex `w` inherits all fields
 from `v` except for `v.pattern`, which instead is set to the subsumer.
+
+If the estimated number of subsumers of `v.pattern` _does_ exceed `maxCombined`, then `#[]` is
+returned.
 -/
 public def Vertex.properSubsumers (v : Vertex) (maxCombined : Nat := 2048) : Array Vertex :=
   if enumBudget v.pattern > maxCombined then #[]

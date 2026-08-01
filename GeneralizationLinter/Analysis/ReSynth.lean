@@ -27,7 +27,7 @@ namespace GeneralizationLinter
 /-- The information that `reSynthExpr` and `reSynthArg` need. -/
 structure ReSynthContext where
   /--
-  Map from stale binders' fvars to their rebuild expressions. The stale binders in this map are the
+  Map from stale binders' fvars to their rebuilt expressions. The stale binders in this map are the
   targeted binder (iff it isn't being split up or dropped), and all the binders that come after it
   in the linted theorem's signature.
   -/
@@ -58,19 +58,19 @@ def WeakenedDeclContext.weakenedTelescope (ctx : WeakenedDeclContext) : Array Ex
   ctx.pre ++ ctx.newBinders ++ ctx.rebuiltPost
 
 
-/-- Wrapper around `mkClassApp` / `reifyKey` that adds support for parametric class binders. -/
-public def replaceBinderType (oldType : Expr) (replacement : Vertex) : MetaM (Option Expr) := do
+/-- Wrapper around `mkClassApp?` / `reifyKey?` that adds support for parametric class binders. -/
+public def replaceBinderType? (oldType : Expr) (replacement : Vertex) : MetaM (Option Expr) := do
   -- If `oldType` reduces to a parametric binder `∀ prefixes, body` (where `body` is a class
   -- application), then deconstruct (i.e., telescope) `oldType`, reify the replacement class in
   -- `body`, and reconstruct (`mkForallFVars`) the parametric binder with the new body `body'`.
   if (← whnfR oldType).isForall then
     forallTelescopeReducing oldType fun prefixes body => do
-      let some body' ← mkClassApp replacement.name (← frameArgs body) | return none
+      let some body' ← mkClassApp? replacement.name (← frameArgs body) | return none
       some <$> mkForallFVars prefixes body'
   -- If `oldType` doesn't reduce to a parametric binder, then it's a class application.
   else do
-    let oldKey ← toKey oldType
-    reifyKey replacement.name replacement.pattern oldKey.subst
+    let oldKey ← canonKey oldType
+    reifyKey? replacement.name replacement.pattern oldKey.subst
 
 
 /-- Does `e` have any fvar that is contained in `stale`? -/
@@ -165,7 +165,7 @@ Rebuild an application argument.
   * If `arg` is an instance (i.e., is class-typed):
     * If `arg`'s type mentions a stale binder, we first try to rebuild it using `reSynthExpr` and
       then synthesize a replacement for `arg` in the weakened context. If any of this fails, or if
-      the newly synthesized instance contains metavriables or mentions a stale binder, we return
+      the newly synthesized instance contains metavariables or mentions a stale binder, we return
       `fallback`.
   * If `arg` is not an instance, return `fallback`.
 
@@ -187,7 +187,7 @@ Let `value` refer to the value of `MonoidHom.mk'`.
 Our linter notices that, for `MonoidHom.mk'`, `Group G` can be weakened to `RightCancelMonoid G`. It
 then wants to verify this weakening candidate. In this process, `weakeningResynthesizable` β-reduces
 the value of `MonoidHom.mk'` applied to `MonoidHom.mk'`'s telescope. Call the result of this
-β-reduction `body`. Then `weakeningResynthesizable` calls `ctx.resynthArg body`.
+β-reduction `body`. Then `weakeningResynthesizable` calls `ctx.reSynthArg body`.
 
 > Now, for context, the elaborated value of `MonoidHom.mk'` is as follows:
 >
@@ -219,7 +219,7 @@ the value of `MonoidHom.mk'` applied to `MonoidHom.mk'`'s telescope. Call the re
 > `MulOneClass G`, and `IsRightCancelMul G`; the latter two join at `RightCancelMonoid G`, so `Group
 > G` could be weakened to `RightCancelMonoid G` in `MonoidHom.mk'._proof_1`'s signature.
 
-This call `ctx.resynthArg body` will eventually call `ctx.reSynthArg ‹@MonoidHom.mk'._proof_1 M G
+This call `ctx.reSynthArg body` will eventually call `ctx.reSynthArg ‹@MonoidHom.mk'._proof_1 M G
 inst inst_1 f map_mul›`. Now, if we didn't unfold `@MonoidHom.mk'._proof_1 M G inst inst_1 f
 map_mul`, `reSynthArg` would leave the head `@MonoidHom.mk'._proof_1` as is and try to rebuild each
 of its binders. In the case of `[inst : Group G]`, which reflects `MonoidHom.mk'`'s _unweakened_
@@ -311,7 +311,7 @@ Among an array `fvars` of `.fvar` expressions, find the `n`th entry that corresp
 returns `some i binder` if the `n`th targeted binder is the fvar `binder`, and `binder = fvars[i]`.
 It returns `none` if there is no `n`th targeted binder in `fvars`.
 -/
-public def getNthTargetedBinder (fvars : Array Expr) (n : Nat) : MetaM (Option (Nat × Expr)) := do
+public def getNthTargetedBinder? (fvars : Array Expr) (n : Nat) : MetaM (Option (Nat × Expr)) := do
   let mut clsIdx := 0
   for h : i in [0:fvars.size] do
     if ← isTargetedBinder (← fvars[i].fvarId!.getDecl) then
@@ -330,18 +330,18 @@ def withoutLocalInstance {α : Type} (drop : FVarId) (act : MetaM α) : MetaM α
 
 
 /--
-Returns `true` iff every `repl[i]`'s class is already synthesizable from the other binders (the ones
+Returns `true` iff every `repls[i]`'s class is already synthesizable from the other binders (the ones
 not being replaced).
 -/
 public def replacementsRedundant (type : Expr) (binderIdx : Nat) (repls : Array Vertex) :
     MetaM Bool := do
   try
     forallTelescope type fun args _ => do
-      let some (_, fv) ← getNthTargetedBinder args binderIdx | return false
+      let some (_, fv) ← getNthTargetedBinder? args binderIdx | return false
       let oldType ← inferType fv
       let mut goals : Array Expr := #[]
       for r in repls do
-        let some g ← replaceBinderType oldType r | return none |>.getD false
+        let some g ← replaceBinderType? oldType r | return none |>.getD false
         goals := goals.push g
       withoutLocalInstance fv.fvarId! <| goals.allM fun g => return (← synthInstance? g).isSome
   catch _ => return false
@@ -366,7 +366,7 @@ def withReplacementBinders {α : Type} (tb : FVarId) (replacements : Array Verte
   let userName := oldDecl.userName
   let rec go (i : Nat) (remap : HashMap FVarId Expr) (newBinders : Array Expr) : MetaM (Option α) := do
     if h : i < replacements.size then
-      let some newBinderType ← replaceBinderType (← tb.getType) replacements[i] | return none
+      let some newBinderType ← replaceBinderType? (← tb.getType) replacements[i] | return none
       withLocalDecl userName oldDecl.binderInfo newBinderType fun newBinder => do
         (go (i + 1) (if replacements.size == 1 then remap.insert tb newBinder else remap)
           (newBinders.push newBinder))
@@ -386,7 +386,7 @@ def withWeakenedDecl {α : Type} (type : Expr) (n : Nat) (repls : Array Vertex)
     (k : WeakenedDeclContext →
     MetaM (Option α)) : MetaM (Option α) := do
   forallTelescope type fun args concl => do
-    let some (ti, oldBinder) ← getNthTargetedBinder args n | return none
+    let some (ti, oldBinder) ← getNthTargetedBinder? args n | return none
     let oldFV := oldBinder.fvarId!
     let pre := args[0:ti].toArray
     let post := (args[ti+1:args.size]).toArray
@@ -467,7 +467,7 @@ public def weakeningResynthesizable (ciType val : Expr) (n : Nat) (repls : Array
 Given a statement with constant info `const`, returns the type of said statement after weakening,
 for each `(n, repls)` in `ws`, the `n`th targeted binder of the statement with binders for `repls`.
 -/
-public def weakenedStatementType (const : ConstantInfo) (ws : Array (Nat × Array Vertex)) : MetaM (Option Expr) := do
+public def weakenedStatementType? (const : ConstantInfo) (ws : Array (Nat × Array Vertex)) : MetaM (Option Expr) := do
   let sorted := ws.qsort (fun a b => a.1 > b.1)
   let mut type := const.type
   for (k, repls) in sorted do

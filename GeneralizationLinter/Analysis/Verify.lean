@@ -92,7 +92,7 @@ If the conclusion isn't a class application, then `none` is returned.
 def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
   forallTelescope declType fun _ concl => do
     if (← isClass? concl).isSome then
-      (try some <$> toKey (← whnf concl) catch _ => return none)
+      (try some <$> canonKey (← whnf concl) catch _ => return none)
     else return none
 
 
@@ -117,7 +117,7 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
 public structure SourceIntact where
   /--
   `true` if the declaration's binders wouldn't have to be modified after applying the weakening,
-  `false` if they _might_ would have to be modified.
+  `false` if they _might_ have to be modified.
   -/
   binders : Bool
   /--
@@ -131,8 +131,6 @@ public structure SourceIntact where
   -/
   body : Bool
 deriving Inhabited, BEq
-
-public def SourceIntact.all (si : SourceIntact) : Bool := si.binders && si.concl && si.body
 
 
 /--
@@ -260,18 +258,6 @@ public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Na
 
 
 /--
-Basically just `recompiledAgainst? ∘ weakenedStatementType`; if the given declaration's _value_
-post-weakenings re-elaborates and type-checks against the original conclusion, return said value
-through a 2-tuple `(W, value)`, where `value : W` is the value in question. Otherwise, return
-`none`.
--/
-public def recompiledVal? (const : ConstantInfo) (src : DeclSource) (ws : Array (Nat × Array Vertex)) :
-    TermElabM (Option (Expr × Expr)) := do
-  let some W ← weakenedStatementType const ws | return none
-  return (← recompiledAgainst? W src const.levelParams).map (W, ·)
-
-
-/--
 Does any binder in `binders`, _as source code_ (`Syntax`), mention the binder `name`?
 
 ---
@@ -332,7 +318,7 @@ For reference:
 │     │  │  ├─ [0] `Lean.Parser.Term.explicit`
 │     │  │  │  ├─ [0] `atom "@"`
 │     │  │  │  └─ [1] `ident Ring.toSemiring`
-│     │  │  └─ `null`
+│     │  │  └─ [1] `null`
 │     │  │     ├─ [0] `ident R`
 │     │  │     └─ [1] `ident inst₁`
 │     │  └─ [2] `atom ")"`
@@ -398,7 +384,7 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
       if !cfg.verify then return some { candidate, grade := .unverified }
       -- `W` is `const` with each weakening in `ws` (i.e., possibly more than one weakening)
       -- applied.
-      let some W ← weakenedStatementType const ws | return none
+      let some W ← weakenedStatementType? const ws | return none
       -- Compute weakening grade.
       let bodyG := (← recompiledAgainst? W src const.levelParams).isSome
       if !bodyG then

@@ -108,7 +108,7 @@ public def insertEdge (G : Digraph V) (s : V) (t : V) : Digraph V :=
   let existingSuccs := G.succs s
   if existingSuccs.contains t then G else ⟨G.adj.insert s (existingSuccs.push t)⟩
 
-/-! ### Reachability -/
+/-! ## Reachability -/
 
 /--
 Depth-first search to compute transitive closure of `v` under `G`.
@@ -173,7 +173,7 @@ public structure Condensation (V : Type u) [BEq V] [Hashable V] where
   graph : Digraph Nat
   /-- Maps an index to the array of vertices contained in the SCC corresponding to the index. -/
   members : HashMap Nat (Array V)
-  /-- Maps a vertex to the index of its parent SCC. -/
+  /-- Maps a vertex to the index of the SCC which contains it. -/
   componentsMap : HashMap V Nat
   /-- Maps an index to its corresponding down-set. -/
   downSetsByIndex : HashMap Nat (HashSet Nat)

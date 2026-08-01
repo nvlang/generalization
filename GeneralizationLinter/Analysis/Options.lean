@@ -101,7 +101,7 @@ public register_option generalizeTypeclasses.split : String := {
   descr := "controls whether typeclass weakenings that would involve splitting a single hypothesis
     into two weaker ones should be suggested. Suggested weakenings that split typeclass hypotheses
     can violate diamond coherence. Measures are in place to significantly reduce the frequency of
-    such false  positives, but they do not eliminate them, which is why this option is set to
+    such false positives, but they do not eliminate them, which is why this option is set to
     \"forbid\" by default. Setting this option to \"allow\" will make the linter suggest splitting
     a typeclass hypothesis only if it could not be weakened otherwise. Setting this option to
     \"prefer\" will make the linter always suggest the most general weakening, even if that means
@@ -145,7 +145,7 @@ public register_option generalizeTypeclasses.verify : Bool := {
 -- experiments.
 public register_option generalizeTypeclasses.subsumption : Bool := {
   defValue := true,
-  descr := "[Warning: disabling this option is experimental]. Whether the subsumption should be used
+  descr := "[Warning: disabling this option is experimental]. Whether subsumption should be used
     when querying the class graph."
 }
 
@@ -165,7 +165,7 @@ public register_option generalizeTypeclasses.redundancyGuard : Bool := {
     weakenings should become \"drop\" suggestions instead. Not all vacuity is detected."
 }
 
-public register_option generalizationLinter.stats : Bool := {
+public register_option generalizeTypeclasses.stats : Bool := {
   defValue := false,
   descr := "[For experiments only] log a GL_STATS info message for each linted declaration."
 }

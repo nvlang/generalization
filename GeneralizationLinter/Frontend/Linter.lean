@@ -133,7 +133,7 @@ def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
 /--
 Given a weakening candidate `candidate` for a declaration with constant info `const`, returns a pair
 of strings, the first string indicating what the existing binder looks like (e.g., `"[Group G]"`),
-and the second string indicating the how said binder may be weakened (e.g., ``"removed (dropped)"``,
+and the second string indicating how said binder may be weakened (e.g., ``"removed (dropped)"``,
 ``"weakened to `Monoid G`"``, ``"split into `Mul G`, `One G`"``).
 -/
 def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
@@ -154,7 +154,7 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
     -- Render a
     let render (t : Vertex) : MetaM String := do
       let some ld := old? | return toString t.name
-      let some e ← replaceBinderType ld.type t | return toString t.name
+      let some e ← replaceBinderType? ld.type t | return toString t.name
       return toString (← Meta.ppExpr e)
     let target ← match candidate.shape with
       | .drop => pure "removed (dropped)"
@@ -329,7 +329,7 @@ public def generalizeTypeclasses : Linter where
           -- Skip `where`/`let rec` helpers that `getTheorems` may report.
           unless declIdMatches declCmd thm.name do continue
           -- Stats
-          let statsOn := generalizationLinter.stats.get (← getOptions)
+          let statsOn := generalizeTypeclasses.stats.get (← getOptions)
           let h0 ← IO.getNumHeartbeats
           let (outcome, emits) : Stats.Outcome × Array Json ←
             if let some graph := graph? then

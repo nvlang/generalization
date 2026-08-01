@@ -163,12 +163,12 @@ After this bijection is established, `getMIChains` then `walk`s
   `Expr` of `proof` where all its binder bvars are replaced with the corresponding fvars from
   `getMIChains`'s telescope).
 
-*Note:* An targeted binder only appearing within another targeted binder's type, and nowhere else,
+*Note:* A targeted binder only appearing within another targeted binder's type, and nowhere else,
 does not mean that it is superfluous.
 
 > In our example, the things `getMIChains` will walk look like this:
 > * "every binder's type": `Type*`, `Type*`, `Ring R'`, `AddCommGroup M'`, `@_root_.Module R' M'
->   (@Ring.toSemiring R' inst₁') (@AddCommGroup.toAddCommMonoid M' inst₂')`, `R`, and `M`.
+>   (@Ring.toSemiring R' inst₁') (@AddCommGroup.toAddCommMonoid M' inst₂')`, `R'`, and `M'`.
 > * "the `sig`'s conclusion": `@Eq M' (...) (...)` (very long, with plenty of instance chains).
 > * "the proof term applied to `getMIChains`'s telescope and β-reduced":
 >   ```
@@ -253,7 +253,7 @@ public structure TargetedBinder extends Key where
   fvar : BinderId
   /--
   Binder's 0-indexed position among the declaration's targeted binders. This allows
-  `ReSynth.getNthTargetedBinder` to locate the binder despite re-telescoping the declaration with
+  `ReSynth.getNthTargetedBinder?` to locate the binder despite re-telescoping the declaration with
   fresh fvars.
   -/
   idx : Nat
@@ -386,7 +386,7 @@ public def getTargetedBinders (decl : Expr) : MetaM (Array TargetedBinder) := do
     for x in xs do
       let ld ← x.fvarId!.getDecl
       if ← isTargetedBinder ld then
-        let app ← toKey (← whnf ld.type)
+        let app ← canonKey (← whnf ld.type)
         binders := binders.push {
           toKey := app,
           fvar := ⟨x.fvarId!⟩,
@@ -555,7 +555,7 @@ def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) : MetaM (Option Key
   -- If `head` has more open key args than the source _and_ has an `outParam` or `semiOutParam`, we
   -- drop the chain. That's mostly because we don't want to be suggesting weakenings like `[Mul α] ↝
   -- [HMul α α α]`.
-  let srcKey ← toKey srcT
+  let srcKey ← canonKey srcT
   let openArity (k : Key) : Nat := k.pattern.countP (·.hasLooseBVars)
   if openArity head ≤ openArity srcKey then return some head
   return if hasDispatchSlot (← getEnv) head.name then none else some head
@@ -614,7 +614,7 @@ partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
   -- If application head is one of the targeted binders: we found an `MIChain`.
   if let .fvar fvarId := fn then
     if let some root := binderIdOf.get? fvarId then
-      let app ← chainHead?.getDM do toKey (← whnf (← inferType e))
+      let app ← chainHead?.getDM do canonKey (← whnf (← inferType e))
       modify (·.push { head := app, inst := root }) -- record `MIChain`
       for arg in args do route binderIdOf arg -- args may contain more chains still
       return
@@ -628,7 +628,7 @@ partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
     walk binderIdOf e
     return
   -- `e` is a class-typed application, e.g. `@Group.toDivInvMonoid α inst`
-  let head ← chainHead?.getDM (toKey linkT)
+  let head ← chainHead?.getDM (canonKey linkT)
   match ← sourceArg? e with
   | some src =>
     -- descend into source

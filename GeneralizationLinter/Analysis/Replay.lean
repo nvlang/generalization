@@ -29,7 +29,7 @@ public inductive WrapperClassification where
 
   `omit`s are tricky for us, and can invalidate `gradedWeakenings`'s `SourceIntact` verdicts. The
   most common case is a suggested weakening being sensible but requiring some `omit` command(s)
-  being adjusted. Ensure that `gradedWeakenings`'s `SourceIntact` verdicts remain accurate in such
+  being adjusted. Ensuring that `gradedWeakenings`'s `SourceIntact` verdicts remain accurate in such
   cases would require a significant amount of machinery, and `omit`s are relatively rare in Mathlib,
   so the compromise we made was to skip declarations wrapped in or affected by `omit`s by default,
   but provide the option `generalizeTypeclasses.acceptOmits`, which, when set to `true`, will lint
@@ -305,8 +305,8 @@ public def rewrapTerm (wrappers : Array Syntax) (stx : Syntax) : Syntax :=
       | ``Parser.Command.open => ``Parser.Term.open
       | ``Parser.Command.set_option => ``Parser.Term.set_option
       -- Should be unreachable.
-      | k => panic! s!"rewrapTerm: unexpected wrapper kind '{k}'\
-          (peelWrappers? should only collect open/set_option)"
+      | k => panic! s!"`rewrapTerm`: unexpected wrapper kind `{k}` \
+          (`peelWrappers?` should only collect `open`/`set_option`)"
     mkNode kind (w.getArgs ++ #[mkAtom "in", body])
 
 
