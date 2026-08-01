@@ -27,7 +27,7 @@ single false positive, i.e., an erroneous suggestion.
 -/
 
 /--
-Run `act` quietly. When we run a verification gate, candidates that are rejected would emit warnings
+Run `act` quietly. When we run a verification gate, candidates that are rejected would emit errors
 that we don't want to bother the user with.
 
 ---
@@ -53,6 +53,24 @@ Convert weakenings for which `replacementsRedundant` flagged every replacement a
 drops. Note that the returned array may be smaller than `candidates`. Furthermore, if `verify :=
 true`, weakenings that are converted to drops but then don't pass `weakeningHolds` are removed from
 the candidates array.
+
+---
+**Examples**
+
+```
+class Foo (α : Type) where
+class Bar (α : Type) where
+instance {α : Type} [Foo α] : Bar α := ⟨⟩
+
+theorem thm₁ {α : Type} [Foo α] [inst : Bar α] : True := trivial
+def thm₂ {α : Type} [inst : Bar α] : Bar α := inst
+
+-- `infoᵢ` is `thmᵢ`'s `ConstantInfo`, `wᵢ = { binder := ‹thmᵢ's [inst : Bar α]›, shape := .weaken
+-- ‹Bar #0› }`, and `dᵢ = { wᵢ with shape := .drop }`.
+reshapeRedundantToDrops info₁ true #[w₁] = #[d₁]
+reshapeRedundantToDrops info₂ true #[w₂] = #[w₂]
+reshapeRedundantToDrops info₂ true #[d₂] = #[d₂]  -- as-is: `weakeningHolds info₂ d₂` is `false`
+```
 -/
 def reshapeRedundantToDrops (declInfo : ConstantInfo) (verify : Bool) (candidates : Array Candidate) :
     MetaM (Array Candidate) :=
@@ -69,25 +87,45 @@ Filter out candidates in `candidates` that propose replacing a binder with the c
 targeted declaration.
 
 ---
-**Example**
+**Examples**
 
-A lemma `lemma {G : Type*} [Group G] : Monoid G` should not have `Group G` weakened to `Monoid G`.
+A lemma `lemma le {G : Type*} [Group G] : Monoid G` should not have `Group G` weakened to `Monoid
+G`.
+
+```
+-- Suppose that `conclK` is that lemma's conclusion key, i.e., `conclusionKey? ‹lemma's type›` is
+-- `some conclK`. Let `cand₁` and `cand₂` be candidates which would weaken its `[Group G]` binder to
+-- `Monoid #0` and `Semigroup #0`, respectively.
+refuseConclusionAssumers (some conclK) #[cand₁, cand₂] = #[cand₂]
+refuseConclusionAssumers none #[cand₁, cand₂] = #[cand₁, cand₂]
+```
 -/
-def refuseConclusionAssumers (concl? : Option Key) (candidates : Array Candidate) :
+def refuseConclusionAssumers (conclK? : Option Key) (candidates : Array Candidate) :
     Array Candidate :=
-  match concl? with
+  match conclK? with
   -- If conclusion is not a class app, then there's no risk of a weakening targeting it, since our
-  -- weakenings are limited to typeclass weakenings. (Universe generalization doesn't present any
-  -- risk of assuming the conclusion, because it never introduces or removes a class hypothesis.)
+  -- weakenings are limited to typeclass weakenings.
   | none => candidates
   -- If conclusion is a class app, check if any replacement matches the conclusion. If so, drop
   -- candidate.
-  | some concl => candidates.filter fun c => c.replacements.all (· != concl.toVertex)
+  | some conclK => candidates.filter fun c => c.replacements.all (· != conclK.toVertex)
 
 
 /--
 Return the conclusion of a declaration with type `declType` as a `Key`, wrapped as an `Option`.
 If the conclusion isn't a class application, then `none` is returned.
+
+---
+**Examples**
+
+```
+conclusionKey? ‹∀ {M : Type u} [CommMonoid M], Monoid M› = some {
+  name := `Monoid, pattern := #[#0], levels := .polymorphic, subst := #[M], forallArity := 0 }
+conclusionKey? ‹∀ {M : Type u} [MulOneClass M] (a : M), a * 1 = a› = none
+-- The conclusion's own `∀`s are telescoped away as well.
+conclusionKey? ‹∀ {ι : Type} {f : ι → Type} [∀ i, Monoid (f i)], ∀ i, Monoid (f i)› = some {
+  name := `Monoid, pattern := #[#0], levels := .concrete #[0], subst := #[f i], forallArity := 0 }
+```
 -/
 def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
   forallTelescope declType fun _ concl => do
@@ -96,7 +134,11 @@ def conclusionKey? (declType : Expr) : MetaM (Option Key) :=
     else return none
 
 
-/-- Returns unverified weakening suggestion candidates for a given declaration. -/
+/--
+Returns weakening suggestion candidates for a given declaration. These are unverified, except that,
+when `config.redundancyGuard` and `config.verify` are both set, candidates reshaped into drops by
+`reshapeRedundantToDrops` have been verified (and removed if they failed).
+-/
 public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo : ConstantInfo) :
     MetaM (Array Candidate) := do
   let some val := declInfo.value? (allowOpaque := true) | return #[]
@@ -104,7 +146,8 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
   if binders.isEmpty then return #[]
   let chains ← getMIChains binders declInfo.type val
   let reqs ← getReqs binders chains
-  let mut candidates := mcaCandidates G binders reqs config (includeSubsumers := config.subsumption)
+  let mut candidates :=
+    mcaCandidates G binders reqs config (includeSubsumers := config.includeSubsumers)
   if config.conclusionGuard then
     candidates := refuseConclusionAssumers (← conclusionKey? declInfo.type) candidates
   if config.redundancyGuard then
@@ -164,7 +207,8 @@ original declaration's), re-elaborate the declaration's value's source code (`sr
 corresponding to a proof term) into `val` and type-check that we have `val : concl`. Return `some
 val` if successful, or `none` otherwise.
 -/
-public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List Name := []) : TermElabM (Option Expr) :=
+public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List Name := []) :
+    TermElabM (Option Expr) :=
   suppressingDiagnostics do
   try withLevelNames ((← getLevelNames) ++ levelNames) do
     -- `depth?` tells `Meta.forallBoundedTelescope` when to stop telescoping, so that `concl` may
@@ -221,23 +265,24 @@ Check that re-elaborated conclusion is definitionally equal to the old conclusio
 conclusion of `W`, which we don't want. So we consult `conclStx` and check how many leading `∀`s it
 has, and re-abstract precisely that number of the telescoped `W`'s trailing binders.
 
-For example, if the signature were `[Group α] (a b : α) : ∀ (c : α), a = b → b = c → a = c`, then
-`args` would be `#[inst, a, b, c, t₁, t₂]`, where `inst : Group α`, `t₁ : a = b`, and `t₂ : b = c`
-would in truth be dynamically-generated hygienic binder names, and `shortConcl` would be `a = c`.
-Meanwhile, `conclStx = ‹∀ (c : α), a = b → b = c → a = c›`, so it can tell us that the "real"
-conclusion actually has 3 leading `∀`s (corresponding to `c`, `t₁`, and `t₂`).
+For example, if the declaration's signature were `[Group α] (a b : α) : ∀ (c : α), a = b → b = c →
+a = c` and `Group α` got weakened to `Monoid α`, then `W` would be that signature with `[Monoid α]`
+in place of `[Group α]`, so `args` would be `#[α, inst, a, b, c, t₁, t₂]`, where `inst : Monoid α`,
+`t₁ : a = b`, and `t₂ : b = c` would in truth be dynamically-generated hygienic binder names, and
+`shortConcl` would be `a = c`. Meanwhile, `conclStx = ‹∀ (c : α), a = b → b = c → a = c›`, so it can
+tell us that the "real" conclusion actually has 3 leading `∀`s (corresponding to `c`, `t₁`, and
+`t₂`).
 
-Now, let's pretend that `Group α` got weakened to `Monoid α`. Then `newConcl = ‹∀ (c : α), a = b → b
-= c → a = c›` (note that we're using the `‹›` brackets are being used both for `Syntax` and
-`Expr`s). We now want to check that `newConcl` matches the old conclusion, but only have the
-`shortConcl` version of the old conclusion. Hence, we extract the last 3 arguments (we know it's 3
-because that's how many leading `∀`s `conclStx` has) from `args` (which were telescoped from the old
-signature) and build a forall-expression, using them as the arguments and `shortConcl` as the
+Now, `newConcl = ‹∀ (c : α), a = b → b = c → a = c›` (note that the `‹›` brackets are being used
+both for `Syntax` and `Expr`s). We now want to check that `newConcl` matches the old conclusion, but
+only have the `shortConcl` version of the old conclusion. Hence, we extract the last 3 arguments (we
+know it's 3 because that's how many leading `∀`s `conclStx` has) from `args` (which were telescoped
+from `W`) and build a forall-expression, using them as the arguments and `shortConcl` as the
 conclusion, which yields `∀ (c : α) (t₁ : a = b) (t₂ : b = c), a = c`. We then check whether this
 "full" old conclusion `Expr` is definitionally equal to `newConcl`, and receive a verdict that is
 informative to us, and not simply `false` because of a mismatch in `∀`-arity of the expressions.
 -/
-public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Name := []) :
+public def conclSourceIntact (W : Expr) (conclStx : Syntax) (levelNames : List Name := []) :
     TermElabM Bool :=
   suppressingDiagnostics do
   try
@@ -272,12 +317,12 @@ theorem foo {R M : Type*}
   [inst₃ : @Module R M (@Ring.toSemiring R inst₁) inst₂] : … := …
 ```
 
-The typical use case for `binderSourceNamesBinder` would be checking whether weakening `[inst₁ :
+The typical use case for `bindersMention` would be checking whether weakening `[inst₁ :
 Ring R]` to `[inst₁ : Semiring R]` would require the user to modify `foo`'s other binders in any
-way. To check this, we would call ``binderSourceNamesBinder #[‹[inst₂ : AddCommMonoid M]›, ‹[inst₃ :
+way. To check this, we would call ``bindersMention #[‹[inst₂ : AddCommMonoid M]›, ‹[inst₃ :
 @Module R M (@Ring.toSemiring R inst₁) inst₂]›] `inst₁`` and get `true`.
 
-Had we instead had the following instead
+Had we instead had the following
 
 ```
 theorem foo {R M : Type*}
@@ -286,8 +331,14 @@ theorem foo {R M : Type*}
   [inst₃ : Module R M] : … := …
 ```
 
-then we'd have called ``binderSourceNamesBinder #[‹[inst₂ : AddCommMonoid M]›, ‹[inst₃ : Module R
+then we'd have called ``bindersMention #[‹[inst₂ : AddCommMonoid M]›, ‹[inst₃ : Module R
 M]›] `inst₁`` and gotten `false`.
+
+```
+bindersMention #[‹[inst₁ : Ring R]›] `R = true
+bindersMention #[‹[inst₁ : Ring R]›] `inst₁ = false
+bindersMention #[‹{R M : Type*}›] `R = false
+```
 
 ---
 **Implementation notes**
@@ -326,7 +377,7 @@ For reference:
 └─ [3] `atom "]"`
 ```
 -/
-public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool :=
+public def bindersMention (binders : Array Syntax) (name : Name) : Bool :=
   binders.any fun b =>
     let args := b.getArgs
     -- For many (most?) binders, `searched` is just `#[b[2], b[3]]` (see implementation note above).
@@ -337,13 +388,27 @@ public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool
 
 
 /--
-If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just run
-`x` with the existing `maxHeartbeats`.
+Run `x` with `maxHeartbeats` set to the lesser of `budget` and the ambient `maxHeartbeats`, treating
+an ambient value of `0` ("unlimited") as larger than any `budget`. In either case `x` runs under
+`withCurrHeartbeats`, so it gets a fresh allowance of that many heartbeats rather than whatever is
+left of the ambient one.
 
 If a runtime (or other non-interrupt) exception occurs while running `x`, it is caught and `dflt`
 ("default") is returned.
 
 If `budget` is `0`, runs `x` directly without any restrictions or exception handling.
+
+---
+**Examples**
+
+```
+-- ambient `maxHeartbeats 200_000`, i.e. `Core.Context.maxHeartbeats = 200_000_000`
+withHeartbeatBudget 1_000 dflt x             -- `x` gets a fresh 1_000 heartbeats
+withHeartbeatBudget 1_000_000_000_000 dflt x -- `x` gets a fresh 200_000_000 heartbeats
+withHeartbeatBudget 0 dflt x                 -- `x` gets what is left of the ambient allowance
+-- ambient `maxHeartbeats 0`
+withHeartbeatBudget 1_000 dflt x             -- `x` gets a fresh 1_000 heartbeats
+```
 -/
 public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
     TermElabM α := do
@@ -372,7 +437,7 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
   let candidates ← withHeartbeatBudget cfg.generationHeartbeats #[] (guardedCandidates cfg graph const)
   if candidates.isEmpty then return #[]
   -- Get the binder names, i.e., for `[inst : Monoid M]`, this would be `` `inst ``. Note that
-  -- `TargetedBinder.origName` is the name of the _class_, i.e., for `[inst : Monoid M]`, it would
+  -- `TargetedBinder.className` is the name of the _class_, i.e., for `[inst : Monoid M]`, it would
   -- be `` `Monoid ``.
   let binderNames ← targetedBinderTelescope const.type fun lds _ => pure (lds.map (·.userName))
   let mut accepted : Array (Nat × Array Vertex) := #[]
@@ -391,10 +456,10 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
         if !accepted.isEmpty then return none
         unless ← weakeningHolds const candidate do return none
       let conclG ← match src.concl? with
-        | some concl' => conclSourceHolds W concl' const.levelParams
+        | some concl' => conclSourceIntact W concl' const.levelParams
         | none => pure false
       let bindersG := match binderNames[candidate.binder.idx]? with
-        | some n => !src.binders.isEmpty && !binderSourceNamesBinder src.binders n
+        | some n => !src.binders.isEmpty && !bindersMention src.binders n
         | none => false
       return some {
         candidate,

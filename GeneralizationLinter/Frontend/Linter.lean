@@ -97,44 +97,70 @@ lemma something ‹binders› : ‹concl› := ‹value›
             elaborators still.
 
     2.  `runLintersAsync stx`: By the time this call runs, `stx` has been fully processed by the
-        elaborator and macro expander, which may have well modified the command state; in our
+        elaborator and macro expander, which may well have modified the command state; in our
         example, we find that ``Command.State.env.constants.map₂[`something]`` now exists, and
         contains the `ConstantInfo` corresponding to the (fully elaborated) constant `something`
         that we declared. Nonetheless, `stx` still refers to the original syntax tree that the
         parser returned at the very beginning.
 
-So `linter` has access to the syntax tree of the user's source code pre-elaboration (and thus also
-pre-expansion), while the command state within which `linter` runs also provides it with access to
-the fully elaborated declaration.
+So `generalizeTypeclasses.run` has access to the syntax tree of the user's source code
+pre-elaboration (and thus also pre-expansion), while the command state within which
+`generalizeTypeclasses.run` runs also provides it with access to the fully elaborated declaration.
 
 ## Main definitions
 
 * `generalizeTypeclasses`: This is the structure that gets registered via `initialize addLinter
-  generalizeTypeclasses`, and whose `linter.run` function runs for every top-level command.
+  generalizeTypeclasses`, and whose `run` function runs for every top-level command.
 * `lintTypeclassesFor`: The function that computes, verifies, and emits the typeclass weakening
   suggestions.
 -/
 
 /--
-Returns true if `type` has ≥1 binders that are targeted by the typeclass linter (under the given
-configuration).
+Returns true if `type` has ≥1 binders that are targeted by the typeclass linter (under the ambient
+`generalizeTypeclasses.targetImplicit`).
+
+---
+**Examples**
+
+```
+hasTargetedBinder ‹∀ {M : Type} [Monoid M] (a : M), a = a› = true
+hasTargetedBinder ‹∀ {M : Type} {inst : Monoid M} (a : M), a = a› = true
+hasTargetedBinder ‹∀ {M : Type} (inst : Monoid M) (a : M), a = a› = false
+hasTargetedBinder ‹∀ {M : Type} (a : M), a = a› = false
+hasTargetedBinder ‹True› = false
+-- `set_option generalizeTypeclasses.targetImplicit false` (defaults to `true`)
+hasTargetedBinder ‹∀ {M : Type} {inst : Monoid M} (a : M), a = a› = false
+```
 -/
-def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
-  let implicit := generalizeTypeclasses.targetImplicit.get (← getOptions)
+def hasTargetedBinder (type : Expr) : MetaM Bool := do
   forallTelescope type fun args _ => do
     for arg in args do
-      let ld ← arg.fvarId!.getDecl
-      let targeted := ld.binderInfo.isInstImplicit ||
-        (implicit && ld.binderInfo matches .implicit | .strictImplicit)
-      if targeted && (← isClass? ld.type).isSome then return true
+      if ← isTargetedBinder (← arg.fvarId!.getDecl) then return true
     return false
 
 
 /--
 Given a weakening candidate `candidate` for a declaration with constant info `const`, returns a pair
-of strings, the first string indicating what the existing binder looks like (e.g., `"[Group G]"`),
-and the second string indicating how said binder may be weakened (e.g., ``"removed (dropped)"``,
-``"weakened to `Monoid G`"``, ``"split into `Mul G`, `One G`"``).
+of strings, the first string indicating what the existing binder looks like, and the second string
+indicating how said binder may be weakened.
+
+---
+**Examples**
+
+```
+-- `const` is `theorem foo {G : Type} [Group G] (a : G) : a = a` and `b` is its `[Group G]` binder;
+-- `const'`/`b'` are the same declaration with `{inst : Group G}` in place of `[Group G]`.
+describeCandidate const ⟨b, .drop⟩ = ("[Group G]", "removed (dropped)")
+describeCandidate const ⟨b, .weaken ⟨`Monoid, #[#0], .polymorphic⟩⟩ =
+  ("[Group G]", "weakened to `Monoid G`")
+describeCandidate const ⟨b, .split #[⟨`Mul, #[#0], .polymorphic⟩, ⟨`One, #[#0], .polymorphic⟩]⟩ =
+  ("[Group G]", "split into `Mul G`, `One G`")
+-- A replacement that cannot be reified into the binder's type shows just its class name.
+describeCandidate const ⟨b, .weaken ⟨`Pow, #[#0, #1], .polymorphic⟩⟩ =
+  ("[Group G]", "weakened to `Pow`")
+describeCandidate const' ⟨b', .weaken ⟨`Monoid, #[#0], .polymorphic⟩⟩ =
+  ("{Group G}", "weakened to `Monoid G`")
+```
 -/
 def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
   targetedBinderTelescope const.type fun lds _ => do
@@ -144,17 +170,19 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
       | some ld => pure (toString (← Meta.ppExpr ld.type))
       -- ↓ Should be unreachable.
       | none => pure (
-          if candidate.binder.origName.isAnonymous then s!"⟨binder {candidate.binder.idx}⟩"
-          else toString candidate.binder.origName)
+          if candidate.binder.className.isAnonymous then s!"⟨binder {candidate.binder.idx}⟩"
+          else toString candidate.binder.className)
     -- Targeted binder (bracketed)
     let disp := match candidate.binder.binderInfo with
       | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
       | .implicit => "{" ++ dispUnbracketed ++ "}"
       | _ => s!"[{dispUnbracketed}]"
-    -- Render a
-    let render (t : Vertex) : MetaM String := do
-      let some ld := old? | return toString t.name
-      let some e ← replaceBinderType? ld.type t | return toString t.name
+    -- `replaceBinderType?` is the same reification the verifier used to build this binder, so we
+    -- print the type that was actually graded rather than a restatement of it. Both fallbacks
+    -- degrade to the bare class name; neither should fire once verified.
+    let render (repl : Vertex) : MetaM String := do
+      let some ld := old? | return toString repl.name
+      let some e ← replaceBinderType? ld.type repl | return toString repl.name
       return toString (← Meta.ppExpr e)
     let target ← match candidate.shape with
       | .drop => pure "removed (dropped)"
@@ -175,7 +203,22 @@ def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit
       tryCatchRuntimeEx x (fun _ => pure ())
 
 
-/-- Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied. -/
+/--
+Returns `CommandElabM`'s options with the `set_option` wrappers in `wrappers` applied.
+
+---
+**Examples**
+
+```
+wrapperEffectiveOptions? #[] = some ‹opts›
+wrapperEffectiveOptions? #[‹open Nat›] = some ‹opts›
+wrapperEffectiveOptions? #[‹set_option pp.all true›] = some ‹opts, pp.all ↦ true›
+wrapperEffectiveOptions? #[‹set_option pp.all true›, ‹set_option pp.all false›] =
+  some ‹opts, pp.all ↦ false›
+wrapperEffectiveOptions? #[‹set_option pp.all 3›] = none
+wrapperEffectiveOptions? #[‹set_option pp.all true›, ‹set_option no.such.option true›] = none
+```
+-/
 def wrapperEffectiveOptions? (wrappers : Array Syntax) :
     CommandElabM (Option Options) := do
   -- `elabSetOption` modifies infotrees of `CommandElabM`, so we snapshot `InfoState` here and roll
@@ -223,7 +266,7 @@ private def statsOfGraded (gw : GradedWeakening) : Json :=
     | .holds p => s!"holds: {p.binders} {p.concl} {p.body}"
     | .unverified => "unverified"
   Json.mkObj [
-    ("binder", toJson (toString c.binder.origName)),
+    ("binder", toJson (toString c.binder.className)),
     ("idx", toJson c.binder.idx),
     ("shape", toJson shape),
     ("targets", toJson (c.replacements.map fun v => toString v.name)),
@@ -269,8 +312,8 @@ This is the structure that gets registered via `initialize addLinter generalizeT
 whose `generalizeTypeclasses.run` function runs for every top-level command.
 
 For each command that `generalizeTypeclasses.run` is called on, it figures out whether it should run
-`lintTypeclassesFor` and, if so, sets up the `DeclSource` record that they'll need and builds (or
-fetches from cache) the typeclass graph.
+`lintTypeclassesFor` and, if so, sets up the `DeclSource` record that it needs and builds (or
+fetches from cache) the class graph.
 -/
 public def generalizeTypeclasses : Linter where
   -- `withSetOptionIn` peels off leading `set_option … in` commands. However, in our docstring
@@ -291,22 +334,22 @@ public def generalizeTypeclasses : Linter where
     let acceptOmits := generalizeTypeclasses.acceptOmits.get effectiveOpts
     let declVals := declValNodes declCmd
     let tcSuppressed := (omitTouched && !acceptOmits) ||
-      (declVals.size == 1 && hasUnreadDeclVal declVals[0]!)
+      (declVals.size == 1 && hasUnreadParts declVals[0]!)
     let hb := Core.getMaxHeartbeats effectiveOpts
-    let cfg := linterConfigOfOptions effectiveOpts
-    let declVals := declValNodes declCmd
+    let cfg := LinterConfig.ofOptions effectiveOpts
     for infoTree in ← getInfoTrees do
-      -- Theorem to lint.
+      -- Theorems to lint.
       let thms := infoTree.getTheorems (← getEnv)
       unless thms.isEmpty do liftTermElabM <| withEffectiveContext effectiveOpts hb do
         -- Get body `Syntax` _without_ wrappers.
         let some rawBody ← (
-            -- Because `linter.run` is called once for each top-level command, if `thms.length ≥ 2`,
-            -- this means that we're dealing with a `mutual` block or a macro expanding to several
-            -- theorems (note that this does not include declarations with the `@[to_additive]`
-            -- attribute, because the automatic transportation it does happens at a later stage of
-            -- elaboration, during which the linter no longer runs). #TODO: Make sure this is
-            -- accurate.
+            -- Because `generalizeTypeclasses.run` is called once for each top-level command, if
+            -- `thms.length ≥ 2`, this means that we're dealing with a `mutual` block, a macro
+            -- expanding to several theorems, or a `where`/`let rec` helper theorem (note that this
+            -- does not include the declarations generated by `@[to_additive]`: those are built by
+            -- transport rather than by elaborating a body, so `getTheorems`, which reports only
+            -- declarations that have a `Lean.Elab.Term.BodyInfo` node in the infotree, never sees
+            -- them).
             if declVals.size == 1 && thms.length == 1 then
               bodyTermOfDeclVal? declVals[0]!
             else pure none) | return
@@ -321,7 +364,7 @@ public def generalizeTypeclasses : Linter where
           binders := (declSig?.map (·[0].getArgs)).getD #[] ++ sectionBinders
         }
         -- Build class graph (or fetch it from cache).
-        let graph? ← if tcOn && !tcSuppressed then
+        let graph? ← if !tcSuppressed then
             tryCatchRuntimeEx (some <$> cachedClassGraph) (fun _ => pure none)
           else pure none
         for thm in thms do
@@ -335,7 +378,7 @@ public def generalizeTypeclasses : Linter where
             if let some graph := graph? then
               tryCatchRuntimeEx (
                   do
-                    if ← hasTargetedClassBinder const.type then
+                    if ← hasTargetedBinder const.type then
                       let gws ← lintTypeclassesFor cfg graph const src thm.name
                         (omitCaveat := omitTouched)
                       return (.analyzed, if statsOn then gws.map statsOfGraded else #[])

@@ -27,7 +27,7 @@ set_option linter.generalizeTypeclasses true
 
 There's a few additional options available:
 
-- `generalizeTypeclasses.split : String` (`"forbid"` by default): controls whether typeclass
+- `generalizeTypeclasses.splitPolicy : String` (`"forbid"` by default): controls whether typeclass
   weakenings that would involve splitting a single hypothesis into two weaker ones should be
   suggested. Suggested weakenings that split typeclass hypotheses can violate diamond coherence.
   Measures are in place to significantly reduce the frequency of such false  positives, but they do

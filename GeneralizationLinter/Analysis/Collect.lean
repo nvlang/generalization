@@ -202,22 +202,20 @@ instance of (i.e., the head of the subterm's outermost class application) and ca
 `chainHead?` as it descends the chain. At every instance transformation (e.g.
 `Module.toDistribMulAction ...`), `collect` will call `walk` on all non-class-typed arguments to
 ensure any instances that might have been involved in the construction of the non-class-typed
-argument are still taken into account. With regards to class-typed arguments, we differentiate
-between two main cases:
+argument are still taken into account. `collect` then asks whether this application is a tributary
+junction (i.e., whether one class-typed argument pins all the others) by consulting `sourceArg?`:
 
-* **Only 1 class-typed argument:** `collect` continues the current chain by descending into the
-  class-typed argument.
+* **`sourceArg?` returns `some src`:** `collect` continues the current chain by descending into
+  `src`, carrying the head returned by `propagatedHead?` (which may be `none`, in which case the
+  chain is dropped), and `route`s every other argument, starting a new chain at each class-typed
+  one. This happens when the application is an unconditional tributary junction.
 
-* **≥2 class-typed arguments (junction):** `collect` tries to figure out what kind of junction this
-  is by calling `sourceArg?`:
-
-  * `sourceArg?` returns `some ...`: `collect` continues the current chain by descending into the
-    source argument, and starts new chains at every other class-typed argument. This happens when
-    the junction is an unconditional tributary junction.
-
-  * `sourceArg?` returns `none`: `collect` drops the current chain and starts new chains at each
-    class-typed argument. This happens when the junction is a confluence, and currently also when it
-    is a conditional tributary junction.
+* **`sourceArg?` returns `none`:** `collect` drops the current chain and `route`s every argument,
+  starting a new chain at each class-typed one. This happens when the application is a confluence,
+  currently also when it is a conditional tributary junction, and whenever the head has no source
+  slot at all (a lone class-typed argument is not automatically the source; for example, in
+  `PProd.isEmpty_right {α : Sort u} {β : Sort v} [IsEmpty β] : IsEmpty (α ×' β)`, the only
+  class-typed argument is `IsEmpty β`, which doesn't pin `α` and hence couldn't be the source).
 
 Once the `MIChain`s have been collected, `getMIChains` returns them. We then pass the chains to
 `getReqs`, which associates each chain to the corresponding `TargetedBinder`. It then converts each
@@ -225,15 +223,15 @@ chain to a `Requirement`, and returns the requirements as an array.
 
 > In our example, the collected `MIChains` are
 >
-> * `{ head := Monoid R', inst := inst₁' }` (4 times)
-> * `{ head := Semiring R', inst := inst₁' }` (5 times)
-> * `{ head := Add M', inst := inst₂' }` (2 times)
-> * `{ head := AddCommMonoid M', inst := inst₂' }` (5 times)
-> * `{ head := AddMonoid M', inst := inst₂' }` (4 times)
-> * `{ head := AddZeroClass M', inst := inst₂' }` (4 times)
-> * `{ head := Zero M', inst := inst₂' }` (3 times)
-> * `{ head := DistribSMul R' M', inst := inst₃' }` (1 time)
-> * `{ head := SMul R' M', inst := inst₃' }` (3 times)
+> * `{ head := Monoid R', root := inst₁ }` (4 times)
+> * `{ head := Semiring R', root := inst₁ }` (5 times)
+> * `{ head := Add M', root := inst₂ }` (2 times)
+> * `{ head := AddCommMonoid M', root := inst₂ }` (5 times)
+> * `{ head := AddMonoid M', root := inst₂ }` (4 times)
+> * `{ head := AddZeroClass M', root := inst₂ }` (4 times)
+> * `{ head := Zero M', root := inst₂ }` (3 times)
+> * `{ head := DistribSMul R' M', root := inst₃ }` (1 time)
+> * `{ head := SMul R' M', root := inst₃ }` (3 times)
 -/
 
 /--
@@ -249,12 +247,12 @@ deriving BEq, Hashable, Inhabited
 
 /-- Targeted binder in a declaration. -/
 public structure TargetedBinder extends Key where
-  /-- fvar ID generated for this binder when `getTargetedBinders` telescopes the declaration. -/
-  fvar : BinderId
+  /-- `BinderId` generated for this binder when `getTargetedBinders` telescopes the declaration. -/
+  id : BinderId
   /--
   Binder's 0-indexed position among the declaration's targeted binders. This allows
-  `ReSynth.getNthTargetedBinder?` to locate the binder despite re-telescoping the declaration with
-  fresh fvars.
+  `getNthTargetedBinder?` (in `Analysis/ReSynth.lean`) to locate the binder despite re-telescoping
+  the declaration with fresh fvars.
   -/
   idx : Nat
   /-- Binder's annotation. -/
@@ -262,8 +260,8 @@ public structure TargetedBinder extends Key where
 deriving Inhabited
 
 
-/-- Get the `Name` of the class head of a `TargetedBinder`'s type (δ-reducing `abbrev`s). -/
-public def TargetedBinder.origName (b : TargetedBinder) : Name := b.toVertex.name
+/-- Get the `Name` of the class head of a `TargetedBinder`'s type (δ-reduced by `whnf`). -/
+public def TargetedBinder.className (b : TargetedBinder) : Name := b.toVertex.name
 
 
 /--
@@ -277,7 +275,7 @@ Suppose we have `[inst : Group α]` and a maximal instance chain `@DivInvMonoid.
 
 ```
 {
-  inst := ⟨`_uniq.123⟩, -- TargetedBinder.fvar of `inst`
+  root := ⟨`_uniq.123⟩, -- TargetedBinder.id of `inst`
   head := {
     name := `Monoid,
     pattern := #[.bvar 0],
@@ -290,8 +288,8 @@ Suppose we have `[inst : Group α]` and a maximal instance chain `@DivInvMonoid.
 public structure MIChain where
   /-- The "resulting" class application of the chain. -/
   head : Key
-  /-- The `TargetedBinder.fvar` corresponding to the instance at the root of the chain. -/
-  inst : BinderId
+  /-- The `TargetedBinder.id` corresponding to the instance at the root of the chain. -/
+  root : BinderId
 deriving Inhabited
 
 
@@ -338,20 +336,23 @@ deriving Inhabited
 
 
 /--
-Depending on the value of `generalizeTypeclasses.targetImplicit`:
-* `true` (default): Returns `true` iff the local declaration is not an explicit binder.
-* `false`: Returns `true` iff the local declaration is an instance-implicit binder.
+Returns `true` if `binder` is class-typed and instance-implicit. If
+`generalizeTypeclasses.targetImplicit` is true (which it is by default), then `isTargetedBinder`
+also returns true if `binder` is class-typed and implicit or strict implicit.
 
 ---
 **Implementation notes**
 
-Instance-implicit binders are almost always classes, and this is enforced by the default-on
-`checkBinderAnnotations`, but they're not technically required to be (see e.g.
-`Mathlib.CategoryTheory.Bundled.of`), so we check out of an abundance of caution.
+Implicit and strict-implicit binders are usually not class-typed, so the `isClass?` check is what
+keeps them out when `generalizeTypeclasses.targetImplicit` is true. For instance-implicit binders
+the check is mostly redundant, since instance-implicit arguments are pretty much always classes
+(which is "enforced" by the default-on `checkBinderAnnotations` linter), but they're not technically
+required to be (Mathlib has one example, `CategoryTheory.Bundled.of`, though there the intention is
+still that the binder should be class-typed, so it's not even really a bona fide counter-example).
 -/
-public def isTargetedBinder (ld : LocalDecl) : MetaM Bool := do
-  unless (← isClass? ld.type).isSome do return false
-  match ld.binderInfo with
+public def isTargetedBinder (binder : LocalDecl) : MetaM Bool := do
+  unless (← isClass? binder.type).isSome do return false
+  match binder.binderInfo with
   | .instImplicit => return true
   | .implicit | .strictImplicit =>
     return generalizeTypeclasses.targetImplicit.get (← getOptions)
@@ -365,9 +366,9 @@ Given `type` of the form `forall xs, A`, extract the targeted binders of `xs` as
 ---
 **Example**
 
-`targetedBinderTelescope "{R} [CommRing R] {K} [Field K] → C" k` will run `k #["CommRing R", "Field
-K"] "C"`, where `"{R} [CommRing R] {K} [Field K] → C"` and `"C"` are to be understood as `Expr`s and
-`"CommRing R"` and `"Field K"` as `LocalDecl`s.
+`targetedBinderTelescope ‹{R} [CommRing R] {K} [Field K] → C› k` will run `k #[‹CommRing R›, ‹Field
+K›] ‹C›`, where `‹{R} [CommRing R] {K} [Field K] → C›` and `‹C›` are to be understood as `Expr`s and
+`‹CommRing R›` and `‹Field K›` as `LocalDecl`s.
 -/
 public def targetedBinderTelescope {α : Type} (type : Expr) (k : Array LocalDecl → Expr → MetaM α) :
     MetaM α :=
@@ -389,23 +390,41 @@ public def getTargetedBinders (decl : Expr) : MetaM (Array TargetedBinder) := do
         let app ← canonKey (← whnf ld.type)
         binders := binders.push {
           toKey := app,
-          fvar := ⟨x.fvarId!⟩,
+          id := ⟨x.fvarId!⟩,
           idx := binders.size
           binderInfo := ld.binderInfo
         }
     return binders
 
-initialize declSourceCacheRef : IO.Ref (HashMap Name (Option Nat)) ← IO.mkRef {}
+initialize sourceSlotCacheRef : IO.Ref (HashMap Name (Option Nat)) ← IO.mkRef {}
 
 /--
 Get index of source slot for a given declaration. Doing this once for each declaration and memoizing
 the result makes descent through instance chains a lot faster.
 
-**Note:** If any of the conclusion's universe parameters are absent from the source slot's type,
-`none` is returned.
+**Note:** If any of the conclusion's universe parameters are absent from the source slot's type and
+present in the type of one of the other arguments, `none` is returned.
+
+---
+**Examples**
+
+```
+-- instance CommGroup.toGroup {G : Type u} [self : CommGroup G] : Group G
+sourceSlot? `CommGroup.toGroup = some 1
+-- instance IsStrictOrderedRing.toIsOrderedRing {R} [Semiring R] [PartialOrder R]
+--   [IsStrictOrderedRing R] : IsOrderedRing R
+sourceSlot? `IsStrictOrderedRing.toIsOrderedRing = some 3
+sourceSlot? `map_one = none -- conclusion isn't class-typed
+-- instance instAddNat : Add Nat
+sourceSlot? `instAddNat = none -- no arguments
+-- instance Prod.instMonoid {M N} [Monoid M] [Monoid N] : Monoid (M × N)
+sourceSlot? `Prod.instMonoid = none -- `Monoid N` doesn't contain `M`
+-- instance Pi.monoid {I : Type u} {f : I → Type v} [∀ i, Monoid (f i)] : Monoid (∀ i, f i)
+sourceSlot? `Pi.monoid = none -- `u` is absent from the source's type but present in `I`'s
+```
 -/
-public def declSource? (fn : Name) : MetaM (Option Nat) := do
-  if let some memo := (← declSourceCacheRef.get)[fn]? then return memo
+public def sourceSlot? (fn : Name) : MetaM (Option Nat) := do
+  if let some memo := (← sourceSlotCacheRef.get)[fn]? then return memo
   let some info := (← getEnv).find? fn | return none
   let verdict ← forallTelescopeReducing info.type fun args concl => do
     -- If conclusion isn't class-typed, then `fn` isn't even a transformation. Example: `map_one`
@@ -427,29 +446,43 @@ public def declSource? (fn : Name) : MetaM (Option Nat) := do
     for j in [0:i] do
       others := collectLevelParams others (← inferType args[j]!)
     return if unpinned.any others.params.contains then none else some i
-  declSourceCacheRef.modify (·.insert fn verdict)
+  sourceSlotCacheRef.modify (·.insert fn verdict)
   return verdict
 
 
 /--
 Given an application `f arg₁ … argₙ`, check if there's a _unique_ `i` such that `argᵢ`'s type
-contains `argⱼ` for all `j ∈ {1, …, n}`. If there is, return `some argᵢ`. Otherwise, return `none`.
+contains `argⱼ` for every `j ≠ i`. If there is, return `some argᵢ`. Otherwise, return `none`.
 
 This is used to handle junctions of instance chains effectively. For example, if we have
 `@DistribMulAction.toDistribSMul M A inst_Monoid_M inst_AddMonoid_A inst_DistribMulAction_M_A`, then
 the source is `inst_DistribMulAction_M_A`, as its type `@DistribMulAction M A inst_Monoid_M
 inst_AddMonoid_A` contains all the other arguments.
 
-**Note:** If `f` is a constant whose declaration's conclusion's universe parameters are absent from
-the type of the `argᵢ` that the procedure described above would return, `sourceArg?` returns `none`
-instead. #TODO: Example.
+**Note:** If `f` is a constant, and one of its declaration's conclusion's universe parameters is
+absent from the type of the `argᵢ` that the procedure described above would return but present in
+the type of one of the other arguments, `sourceArg?` returns `none` instead.
+
+---
+**Examples**
+
+```
+-- instance DistribMulAction.toDistribSMul {M A} [Monoid M] [AddMonoid A] [DistribMulAction M A] :
+--   DistribSMul M A
+sourceArg? ‹@DistribMulAction.toDistribSMul M A i₁ i₂ i₃› = some ‹i₃›
+sourceArg? ‹@DistribMulAction.toDistribSMul M A i₁› = none -- source slot has no argument
+-- instance Prod.instMonoid {M N} [Monoid M] [Monoid N] : Monoid (M × N)
+sourceArg? ‹@Prod.instMonoid M N i₁ i₂› = none -- `Monoid N` doesn't contain `M`
+-- instance Pi.monoid {I : Type u} {f : I → Type v} [∀ i, Monoid (f i)] : Monoid (∀ i, f i)
+sourceArg? ‹@Pi.monoid I f i₁› = none -- `u` is absent from the source's type but present in `I`'s
+```
 -/
 def sourceArg? (e : Expr) : MetaM (Option Expr) := do
   let e := e.consumeMData
   let args := e.getAppArgs
   if let some f := e.getAppFn.constName? then
-    -- const-headed: consult `declSource?`
-    let some i ← declSource? f | return none
+    -- const-headed: consult `sourceSlot?`
+    let some i ← sourceSlot? f | return none
     return args[i]?
   -- fvar-headed: candidates are args (not necessarily the last arg) that contain every other arg
   let cands ← args.filterM fun arg => do
@@ -512,13 +545,12 @@ shouldn't. If it shouldn't, that means `collect` will drop the chain and start a
 **Implementation notes**
 
 `propagatedHead?` returns `none` iff
-1.  the transformation `linkT`'s type contains frame arguments that are not "statable" using the
+1.  the transformation's type `linkT` has key arguments that are not "statable" using the
     source's arguments, or
-2.  the `head` has more open arguments than the source and has an `outParam` or `semiOutParam`.
+2.  the `head` has more open key args than the source and has an `outParam` or `semiOutParam`.
 
 Condition 1 is inherited from condition 1 of `isWeakeningEdge`.
-Condition 2 is a heuristic that aims to reduce non-idiomatic suggestions like `Mul α ↝ HMul α α α`
-or `Preorder α ↝ Trans LT.lt LT.lt LT.lt`.
+Condition 2 is a heuristic that aims to reduce non-idiomatic suggestions like `Mul α ↝ HMul α α α`.
 
 **Note:** Condition 2 of `isWeakeningEdge` is encoded separately in `sourceArg?`.
 
@@ -532,23 +564,24 @@ Examples where `propagatedHead?` returns `some head`:
 * `IsSimpleModule R M ↝ Nontrivial (Submodule R M)`
 * `Algebra R A ↝ IsScalarTower R A A`
 * `MonoidHomClass F M N ↝ MulHomClass F M N`
+* `Preorder α ↝ Trans LT.lt LT.lt LT.lt` (condition 2 misses it: `head` has no more open key args
+  than the source)
 
 Examples where `propagatedHead?` returns `none`:
 
 * `IsCoatomic α ↝ IsAtomic αᵒᵈ` (condition 1)
 * `Monad m ↝ ForIn m ρ α` (conditions 1 and 2, though condition 1 short-circuits already)
 * `Mul α ↝ HMul α α α` (condition 2)
-* `Preorder α ↝ Trans LT.lt LT.lt LT.lt` (condition 2)
 -/
 def propagatedHead? (head : Key) (linkT : Expr) (src : Expr) : MetaM (Option Key) := do
   let srcT ← whnf (← inferType src)
   let srcArgs := srcT.getAppArgs
-  -- The transformation's open frame args that are not syntactically equal to one of `src`'s args.
-  let rough := (← frameArgs linkT).filter (fun c => !srcArgs.contains c)
-  -- If all of the transformation's open frame args are syntactically equal to one of `src`'s args,
+  -- The transformation's open key args that are not syntactically equal to one of `src`'s args.
+  let rough := (← keyArgs linkT.getAppFn linkT.getAppArgs).filter (fun c => !srcArgs.contains c)
+  -- If all of the transformation's open key args are syntactically equal to one of `src`'s args,
   -- we know for sure that condition 1 is satisfied. If not, we need to check more carefully.
   unless rough.isEmpty do
-    let srcSubjects ← frameArgs srcT
+    let srcSubjects ← keyArgs srcT.getAppFn srcT.getAppArgs
     let isClosed (e : Expr) : MetaM Bool := pure (!e.hasFVar && !srcSubjects.any (·.occurs e))
     unless ← rough.allM (statableFrom srcArgs isClosed) do
       return none
@@ -615,7 +648,7 @@ partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
   if let .fvar fvarId := fn then
     if let some root := binderIdOf.get? fvarId then
       let app ← chainHead?.getDM do canonKey (← whnf (← inferType e))
-      modify (·.push { head := app, inst := root }) -- record `MIChain`
+      modify (·.push { head := app, root }) -- record `MIChain`
       for arg in args do route binderIdOf arg -- args may contain more chains still
       return
   -- Not an application ⟹ no arguments to route through. Call `walk` instead.
@@ -678,7 +711,7 @@ public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
       let ld ← x.fvarId!.getDecl
       if ← isTargetedBinder ld then
         if let some b := binders[k]? then
-          binderIdOf := binderIdOf.insert x.fvarId! b.fvar
+          binderIdOf := binderIdOf.insert x.fvarId! b.id
         k := k + 1
     let go : CollectM Unit := do
       for x in xs do walk binderIdOf (← x.fvarId!.getType)
@@ -695,8 +728,8 @@ rooted at one of the targeted binders.
 public def getReqs (binders : Array TargetedBinder) (chains : Array MIChain) :
     MetaM (Array Requirement) := do
   let binderOfId : HashMap BinderId TargetedBinder :=
-    binders.foldl (init := {}) fun binderOfId' b => binderOfId'.insert b.fvar b
+    binders.foldl (init := {}) fun binderOfId' b => binderOfId'.insert b.id b
   return chains.filterMap fun c =>
-    match binderOfId[c.inst]? with
+    match binderOfId[c.root]? with
     | some b => some { toKey := c.head, binder := b }
     | none => none

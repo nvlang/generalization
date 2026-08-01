@@ -21,7 +21,7 @@ linter.
 
 * `Digraph`: Implemented as an adjacency list.
 * `Condensation`: Condensation of digraph into DAG of SCCs.
-* `minCommonAncestors`: Find the minimal upper bounds.
+* `minCommonAncestors`: Find the minimal common ancestors.
 
 ---
 **References**
@@ -59,11 +59,11 @@ public structure Digraph (V : Type u) [BEq V] [Hashable V] where
   ```
 
   For the graph shown above (where the `5` is an isolated vertex), we'd have:
-  * `adj[1] = [2, 3]`
-  * `adj[2] = [4]`
-  * `adj[3] = []`
-  * `adj[4] = [2]`
-  * `adj[5] = []`
+  * `adj[1] = #[2, 3]`
+  * `adj[2] = #[4]`
+  * `adj[3] = #[]`
+  * `adj[4] = #[2]`
+  * `adj[5] = #[]`
 
   ---
   **Implementation Notes**
@@ -102,6 +102,16 @@ public def insertVertex (G : Digraph V) (v : V) : Digraph V :=
 /--
 Inserts edge `s → t` into `G`, and returns updated `G`. (`s` stands for "source
 vertex" and `t` stands for "target vertex" of the edge to be inserted.)
+
+---
+**Examples**
+
+```
+-- `G := ({} : Digraph Nat).insertEdge 1 2`
+G.vertices = #[1, 2]
+G.succs 1 = #[2]
+(G.insertEdge 1 2).succs 1 = #[2]
+```
 -/
 public def insertEdge (G : Digraph V) (s : V) (t : V) : Digraph V :=
   let G := (G.insertVertex s).insertVertex t
@@ -113,11 +123,31 @@ public def insertEdge (G : Digraph V) (s : V) (t : V) : Digraph V :=
 /--
 Depth-first search to compute transitive closure of `v` under `G`.
 
-* `acc` is an array that will eventually contain all vertices reachable from
-  `v`, including `v` itself. If `G` is acyclic, this list will be returned in
-  postorder.
-* `vis` is the set of visited vertices. It will eventually also contain all
-  vertices reachable from `v`, including `v` itself.
+* `acc` is an accumulator: the returned array is `acc` with the vertices newly visited by this
+  search pushed onto it, in DFS postorder (so, if `G` is acyclic, in reverse topological order). The
+  newly visited vertices are those reachable from `v` along a path that avoids `vis` (anything lying
+  only behind an already-visited vertex is skipped). (`sccs` relies on exactly this, threading `vis`
+  across its calls so that each call returns one strongly-connected component.)
+* `vis` is the set of visited vertices. The returned set is `vis` together with the same newly
+  visited vertices that were pushed onto `acc`.
+
+---
+**Examples**
+
+```
+/-
+Suppose `G` has edges `1 → 2`, `1 → 3`, `2 → 4`, `4 → 2`, and an isolated vertex `5`:
+
+1 → 2 ─┐
+↓   ↑  │    5
+3   4 ←┘
+-/
+G.dfs 1 #[] {} = (#[4, 2, 3, 1], {1, 2, 3, 4})
+G.dfs 1 #[] {2} = (#[3, 1], {1, 2, 3})
+G.dfs 1 #[] {1} = (#[], {1})
+G.dfs 3 #[0] {} = (#[0, 3], {3})
+G.dfs 9 #[] {} = (#[9], {9})
+```
 -/
 public partial def dfs (G : Digraph V) (v : V) (acc : Array V) (vis : HashSet V) :
     Array V × HashSet V :=
@@ -130,7 +160,8 @@ public partial def dfs (G : Digraph V) (v : V) (acc : Array V) (vis : HashSet V)
 
 /--
 Returns the set of vertices of `G` reachable from `v`, including `v`.
-If `v` is not a vertex of `G`, . #TODO
+
+**Warning:** If `v` is not a vertex of `G`, this returns the singleton set `{v}` rather than `{}`.
 -/
 public def downSet (G : Digraph V) (v : V) : HashSet V := (G.dfs v #[] {}).2
 
@@ -140,6 +171,10 @@ public def downSets (G : Digraph V) : HashMap V (HashSet V) :=
   G.adj.fold (init := {}) fun sets v _ => sets.insert v (G.downSet v)
 
 
+/--
+Returns all vertices of `G`, in the postorder of a depth-first search that starts a new tree at
+each vertex of `G` in turn. If `G` is acyclic, this is a reverse topological order.
+-/
 public def postorder (G : Digraph V) : Array V :=
   (G.vertices.foldl (init := (#[], {})) fun (acc, vis) v => G.dfs v acc vis).1
 
@@ -155,6 +190,22 @@ public def transpose (G : Digraph V) : Digraph V :=
 /--
 Strongly-connected components of `G`, computed with [Kosaraju–Sharir's
 algorithm](https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm).
+
+---
+**Examples**
+
+```
+/-
+Suppose `G` has edges `1 → 2`, `1 → 3`, `2 → 4`, `4 → 2`, and an isolated vertex `5`:
+
+1 → 2 ─┐
+↓   ↑  │    5
+3   4 ←┘
+-/
+G.sccs = #[#[5], #[1], #[3], #[4, 2]]
+-- Suppose `H` has edges `1 → 2` and `2 → 1`.
+H.sccs = #[#[2, 1]]
+```
 -/
 public def sccs (G : Digraph V) : Array (Array V) :=
   let G' := G.transpose
@@ -203,13 +254,25 @@ public def condense (G : Digraph V) : Condensation V :=
 
 namespace Condensation
 
-/-- Returns indices of SCCs containing the vertices `vs`. -/
+/--
+Returns indices of SCCs containing the vertices `vs`.
+
+---
+**Examples**
+
+```
+-- Suppose `H` has edges `1 → 2` and `2 → 1`, so that `H.condense` has a single SCC, at index `0`.
+H.condense.indicesOf {1, 2} = {0}
+H.condense.indicesOf {2, 9} = {0}
+H.condense.indicesOf {9} = {}
+```
+-/
 public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
   vs.fold (init := {}) fun indices v => match c.componentsMap[v]? with
     | some idx => indices.insert idx
     | none     => indices
 
-/-! ### Least Upper Bounds -/
+/-! ### Minimal Common Ancestors -/
 
 /--
 Establishes how `minCommonAncestors` should handle witness sets where none of the witnesses
@@ -217,8 +280,8 @@ corresponds to a vertex of the condensation.
 -/
 public inductive AbsencePolicy
   /--
-  Witness sets where none of the witnesses corresponds to a vertex of the condensation become empty
-  arrays, leading to `minCommonAncestors` returning `#[]`. (Default.)
+  If any witness set has none of its witnesses corresponding to a vertex of the condensation, then
+  `minCommonAncestors` abandons the whole query and returns `#[]`. (Default.)
   -/
   | failClosed
   /--
@@ -324,6 +387,24 @@ public def minCommonAncestors (cond : Condensation V) (witnessSets : Array (Hash
 Given the condensation of a graph and two vertices `s` and `t` of the graph
 (pre-condensation), returns whether `s` reaches `t` in the graph
 (pre-condensation).
+
+---
+**Examples**
+
+```
+/-
+Suppose `G` has edges `1 → 2`, `1 → 3`, `2 → 4`, `4 → 2`, and an isolated vertex `5`:
+
+1 → 2 ─┐
+↓   ↑  │    5
+3   4 ←┘
+-/
+G.condense.reaches 1 4 = true
+G.condense.reaches 4 2 = true
+G.condense.reaches 4 1 = false
+G.condense.reaches 5 5 = true
+G.condense.reaches 9 9 = false
+```
 -/
 public def reaches (c : Condensation V) (s t : V) : Bool :=
   match c.componentsMap[s]?, c.componentsMap[t]? with
@@ -342,10 +423,10 @@ returns an array in which no two elements should be merged anymore.
 We require the following preconditions:
 
 * `connected` must be a symmetric relation.
-* For any `a b c : α`, `connected a c` implies `connected (fuse a b) c`.
+* For any `a b c : α`, `connected a c` or `connected b c` implies `connected (fuse a b) c`.
 
 ---
-**Examples:**
+**Examples**
 
 ```
 coalesceWith (·.append ·) (fun x y : List Nat => x.any y.contains)
@@ -381,7 +462,7 @@ Partitions `used` into subsets whose down-sets are disconnected according to `co
 **Example**
 
 Roughly speaking, in our use-case, if `partitionByDesc` was called on `{Semigroup #0, MulOneClass
-#0, IsPreorder #0}`, it would return `[{Semigroup #0, MulOneClass #0}, {IsPreorder #0}]`. See
+#0, IsPreorder #0}`, it would return `#[{Semigroup #0, MulOneClass #0}, {IsPreorder #0}]`. See
 `MCAContext.sharesDataDesc` for more information.
 -/
 public def partitionByDesc (used : HashSet V) (conn : V → V → Bool) : Array (HashSet V) :=

@@ -52,14 +52,14 @@ OPTIONS = {
     "weak.linter.pythonStyle": "true",
     "weak.linter.style.longFile": "1500",
     "weak.linter.generalizeTypeclasses": "true",
-    "weak.generalizationLinter.stats": "true",
+    "weak.generalizeTypeclasses.stats": "true",
     "weak.generalizeTypeclasses.generationHeartbeats": "20000000",
     "weak.generalizeTypeclasses.perCandidateHeartbeats": "20000000",
 }
 GRID = {
     f"{'verify' if v else 'no_verify'}+{s}": {
         "weak.generalizeTypeclasses.verify": "true" if v else "false",
-        "weak.generalizeTypeclasses.split": s,
+        "weak.generalizeTypeclasses.splitPolicy": s,
     }
     for v in (0, 1)
     for s in ("forbid", "allow", "prefer")

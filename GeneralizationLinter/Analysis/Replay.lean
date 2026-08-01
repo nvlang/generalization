@@ -13,6 +13,10 @@ namespace GeneralizationLinter
 
 /-! # Replay -/
 
+/--
+Classification of a "declaration wrapper" (the `…` of a `… in ‹decl›` command), telling the linter
+whether to "replay" it, ignore it, or refuse to lint the wrapped declaration.
+-/
 public inductive WrapperClassification where
   /--
   "Declaration wrappers" that we can and should "replay", because they may affect our linter's
@@ -55,7 +59,20 @@ declarations that the linter may analyze is `Parser.Command.declaration`.
 public def lemmaKind : SyntaxNodeKind := `lemma
 
 
-/-- Classify "wrappers". -/
+/--
+Classify "wrappers".
+
+---
+**Examples**
+
+```
+classifyWrapper ‹open Nat› = .replayable
+classifyWrapper ‹set_option pp.all true› = .replayable
+classifyWrapper ‹include x› = .ignorable
+classifyWrapper ‹omit [Inhabited α]› = .ignorable
+classifyWrapper ‹attribute [simp] Nat.add› = .refused
+```
+-/
 public def classifyWrapper (w: Syntax) : WrapperClassification :=
   match w.getKind with
   | ``Parser.Command.open | ``Parser.Command.set_option => .replayable
@@ -65,6 +82,19 @@ public def classifyWrapper (w: Syntax) : WrapperClassification :=
   | ``Parser.Command.omit => .ignorable
   | _ => .refused
 
+/--
+Returns `true` if any of `stx`'s "wrappers" is an `omit`.
+
+---
+**Examples**
+
+```
+hasOmitWrapper ‹open Nat in set_option pp.all true in omit [Inhabited α] in …› = true
+hasOmitWrapper ‹open Nat in @[instance] theorem t : True := trivial› = false
+hasOmitWrapper ‹include x in theorem t : True := trivial› = false
+hasOmitWrapper ‹theorem t : True := trivial› = false
+```
+-/
 public partial def hasOmitWrapper (stx : Syntax) : Bool :=
   if stx.getKind != ``Parser.Command.in then false
   else (stx.getArg 0).getKind == ``Parser.Command.omit || hasOmitWrapper (stx.getArg 2)
@@ -80,7 +110,7 @@ omit [Monoid M] in
 @[instance] lemma something : … := …
 ```
 
-then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all›],
+then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_option pp.all true›],
 ‹@[instance] lemma something : … := …›)`. (Note that the `omit [Monoid M] in` wrapper is not among
 those returned; this is because we either ignore `omit`s entirely or, if `acceptOmits` is `false`
 (which it is by default), declarations with `omit`s are skipped by the linter altogether.)
@@ -88,8 +118,7 @@ those returned; this is because we either ignore `omit`s entirely or, if `accept
 If the declaration includes any other wrappers (e.g. `attribute … in …`), return `none`. This is
 because `peelWrappers?`'s output is passed on to `rewrapTerm` to get rewrapped into a _term_ instead
 of a command or declaration (which would be much harder to deal with further down the line), and
-`open` and `set_option` are the only wrappers of this kind that are available in
-`Parser.Command.Term`.
+`open` and `set_option` are the only wrappers of this kind that are available in `Parser.Term`.
 
 There's >2000 declarations in Mathlib v4.32.1 that use wrappers that lead `peelWrappers?` to return
 `none` (which in turn prevents the linter from being able to emit any suggestions).
@@ -227,12 +256,12 @@ mess with any of the fields.
 ```
 theorem foo … : … := …
 where
-  field₁
+  decl₁
   ⋮
-  fieldₙ
+  declₙ
 ```
 
-get skipped for now. This is because, for these kinds of declarations, Lean elaborates each `fieldᵢ`
+get skipped for now. This is because, for these kinds of declarations, Lean elaborates each `declᵢ`
 into a separate constant, so we'd have to check each of them recursively. This is certainly doable,
 but we could only find 3 theorems or lemmas in Mathlib v4.32.1 that make use of `where` in this way
 (`LucasLehmer.norm_num_ext.sModNatTR_eq_sModNat`, `TrivSqZeroExt.snd_pow_of_smul_comm`, and
@@ -242,7 +271,8 @@ small. Nonetheless, it's potential future work.
 ---
 **Example**
 
-For the example from `peelWrappers?`, `bodyTermOfDeclVal?` returns the following syntax tree:
+For the `Parser.Command.declValSimple` node of the example from `peelWrappers?`,
+`bodyTermOfDeclVal?` returns (`some` of) the following syntax tree:
 
 ```markdown
 `ident trivial`
@@ -277,7 +307,7 @@ wrapper in `wrappers`
 `Lean.Parser.Command.open`
 ├─ `atom "open"`
 └─ `Lean.Parser.Command.openSimple`
-    └─ `null` (many1 ident)
+   └─ `null` (many1 ident)
       └─ `ident Nat`
 ```
 
@@ -337,6 +367,17 @@ public def foldSetOptionWrappers? {m : Type → Type} [Monad m] (wrappers : Arra
 /--
 Given `stx : Syntax`, returns all descendants of `stx` of kind `kind` (possibly including `stx`
 itself).
+
+---
+**Examples**
+
+```
+collectNodes ``Parser.Command.declValSimple ‹theorem t : True := trivial› = #[‹:= trivial›]
+collectNodes ``Parser.Command.declValSimple ‹:= trivial› = #[‹:= trivial›]
+collectNodes ``Parser.Command.declValSimple ‹trivial› = #[]
+collectNodes ``Parser.Command.in ‹open Nat in set_option pp.all true in omit [Inhabited α] in …›
+  = #[‹open Nat in …›, ‹set_option pp.all true in …›, ‹omit [Inhabited α] in …›]
+```
 -/
 public partial def collectNodes (kind : SyntaxNodeKind) : Syntax → Array Syntax
   | stx@(.node _ kind' args) =>
@@ -345,22 +386,62 @@ public partial def collectNodes (kind : SyntaxNodeKind) : Syntax → Array Synta
   | _ => #[]
 
 /--
-Returns the "value" nodes of `stx`, i.e., the `:= …` node (`Parser.Command.declValSimple`) and
-optional `where …` node (`Parser.Command.whereStructInst`).
+Returns the "value" nodes of `stx`, i.e., its `:= …` (`Parser.Command.declValSimple`) and
+`where …` (`Parser.Command.whereStructInst`) descendants.
 
 See implementation notes of `bodyTermOfDeclVal?` for more info.
+
+---
+**Examples**
+
+```
+declValNodes ‹theorem t : True := trivial› = #[‹:= trivial›]
+declValNodes ‹instance : Foo Bar where f := 1; g := 2› = #[‹where f := 1; g := 2›]
+declValNodes ‹theorem t : … := aux where aux : … := …› = #[‹:= aux where aux : … := …›]
+declValNodes ‹def f : Nat → Nat | 0 => 0 | n + 1 => n› = #[]
+```
 -/
 public def declValNodes (stx : Syntax) : Array Syntax :=
   collectNodes ``Parser.Command.declValSimple stx
     ++ collectNodes ``Parser.Command.whereStructInst stx
 
-public def hasUnreadDeclVal (dval : Syntax) : Bool :=
+/--
+Returns `true` if the "value" node `dval` carries syntax that the linter does not re-elaborate,
+i.e., termination/fixpoint hints or a trailing `where` block of auxiliary declarations. Returns
+`false` for any other kind of node.
+
+---
+**Examples**
+
+```
+hasUnreadParts ‹:= trivial› = false
+hasUnreadParts ‹:= n termination_by n› = true
+hasUnreadParts ‹:= aux where aux : True := trivial› = true
+hasUnreadParts ‹where f := 1; g := 2› = false
+hasUnreadParts ‹where f := aux where aux : Nat := 1› = true
+```
+-/
+public def hasUnreadParts (dval : Syntax) : Bool :=
   if dval.getKind == ``Parser.Command.declValSimple then
     !(dval[2].getArgs.all (·.isNone)) || !dval[3].isNone
   else if dval.getKind == ``Parser.Command.whereStructInst then
     !dval[2].isNone
   else false
 
+/--
+Returns `true` if `declCmd`'s first `declId` is a suffix of `declName`, or if `declCmd` has no
+`declId`.
+
+---
+**Examples**
+
+```
+declIdMatches ‹theorem t : True := trivial› `Foo.t = true
+declIdMatches ‹theorem t : True := trivial› `Foo.s = false
+declIdMatches ‹theorem t : True := aux where aux : True := trivial› `t.aux = false
+declIdMatches ‹instance : Foo Bar where f := 1; g := 2› `instFooBar = true
+```
+-/
 public def declIdMatches (declCmd : Syntax) (declName : Name) : Bool :=
   match declCmd.find? (·.isOfKind ``Parser.Command.declId) with
   | some declId => (declId.getArg 0).getId.eraseMacroScopes.isSuffixOf declName

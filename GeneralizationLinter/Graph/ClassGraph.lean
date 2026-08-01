@@ -46,33 +46,6 @@ public structure ClassEdge where
 /-! ## Extraction -/
 
 /--
-The non-instance-implicit arguments of a class application. These are the arguments that are used by
-`mkClassApp?` to reify a suggestion candidate. We call these arguments the ***frame arguments*** or
-***frame*** of a class application.
-
-There can be some overlap between frame arguments and targeted binders, which is fine, because we're
-not using frame arguments to index entries of the class graph, but rather just to reify suggestion
-candidates.
-
----
-**Examples**
-
-```
--- class IsPreorder (α : Sort*) (r : α → α → Prop) : Prop
-frameArgs (@IsPreorder α r) = #[α, r]
--- class CharP (R : Type*) [AddMonoidWithOne R] (p : outParam ℕ) : Prop
-frameArgs (@CharP R _ p) = #[R, p]
--- class Module (R : Type u) (M : Type v) [Semiring R] [AddCommMonoid M] : Type (max u v)
-frameArgs (@Module R M _ _) = #[R, M]
-```
--/
-public def frameArgs (classAppE : Expr) : MetaM (Array Expr) := do
-  let paramInfos := (← getFunInfo classAppE.getAppFn).paramInfo
-  return classAppE.getAppArgs.zipIdx.filterMap fun (arg, i) =>
-    if (paramInfos[i]?.map (·.binderInfo.isInstImplicit)).getD false then none else some arg
-
-
-/--
 Returns `true` iff `e` is "statable" from `sArgs`.
 
 We define statability inductively as follows: `e` is statable from `sArgs` if
@@ -80,8 +53,8 @@ We define statability inductively as follows: `e` is statable from `sArgs` if
 1.  `whnfR e` is syntactically equal to `whnfR sArgs[i]` for some `i`,
 2.  `whnfR e` is an fvar occurring in `whnfR sArgs[i]` for some `i`,
 3.  `whnfR e` is "closed" according to `isClosed` (intuitively, this means it contains no fvars), or
-4.  `whnfR e` is an application of a "non-synonym" type former to arguments that are statable from
-    `sArgs`, or
+4.  `whnfR e` is an application of a "non-synonym" type former whose key arguments (see
+    `keyArgs`) are all statable from `sArgs`, or
 5.  `whnfR e` is a projection whose projected term is statable from `sArgs`.
 
 By synonym type former we mean any type former which unfolds to one of its own arguments. By
@@ -97,8 +70,8 @@ One could argue that condition 2 should be weakened to `whnfR e` being an fvar t
 α β`, while the original condition 2 claims that it is not. However, condition 2, as stated, is
 better-suited for our purposes. This is because `canonArg` also uses `whnfR`, meaning that an
 application like `Monoid (FirstOf α β)` would be canonicalized into `Monoid α`. Hence, an instance
-like `instance Monoid (FirstOf α β) : Magma β` (let's pretend that it makes sense) would be
-extracted into an (unsound) edge from `Monoid α` to `Magma β` under the weakened condition 2, and
+like `instance [Monoid (FirstOf α β)] : Mul β` (let's pretend that it makes sense) would be
+extracted into an (unsound) edge from `Monoid α` to `Mul β` under the weakened condition 2, and
 rejected under the original condition 2.
 
 ---
@@ -153,13 +126,13 @@ where go (sArgs : Array Expr) (e : Expr) : MetaM Bool := do
   if ← isClosed e then return true
   -- Case 5: `whnfR e` is a projection on a term which is statable from `sArgs`.
   if let .proj _ _ b := e then return ← go sArgs b
-  -- Case 4: `whnfR e` is an application of a non-synonym type former to arguments that are statable
-  -- from `sArgs`.
+  -- Case 4: `whnfR e` is an application of a non-synonym type former whose key arguments are all
+  -- statable from `sArgs`.
   let fn := e.getAppFn
   let some head := fn.constName? | return false
   if ← isSynonymFormer head then return false
-  unless isTypeConstructor (← getEnv) fn do return false
-  (← frameArgs e).allM (go sArgs)
+  unless isTypeFormerConst (← getEnv) fn do return false
+  (← keyArgs e.getAppFn e.getAppArgs).allM (go sArgs)
 
 
 /--
@@ -167,7 +140,7 @@ Helper for `extractEdge?` which, given some information about the instance decla
 `extractEdge?` is processing, indicates whether the edge is a weakening edge, which is the case iff
 all of the following conditions are satisfied:
 
-1.  Every frame argument of the target is statable from the source's arguments (see also
+1.  Every key argument of the target is statable from the source's arguments (see also
     `statableFrom`).
 
     **Why?** Our graph's edges are ordered pairs of vertices, each vertex representing a specific
@@ -179,7 +152,7 @@ all of the following conditions are satisfied:
     type as a direct argument.
 
     **Why?** The rationale is essentially the same as for condition 1, this is just the analog for
-    class-typed args. Together, frame arguments and class-typed arguments comprise all arguments of
+    class-typed args. Together, non-instance-implicit and class-typed arguments comprise all of
     an instance (unless there's a non-class-typed instance-implicit parameter, which is almost never
     the case; Mathlib has only one such declaration, `CategoryTheory.Bundled.of`, and even there the
     intended usage is that the instance-implicit parameter should be a typeclass). They may also
@@ -196,7 +169,7 @@ on the Lean Zulip.
 (Note: In the examples below, "source" refers to the last argument of the instance, which is looser
 than the sense in which the term is used for `sourceArg?`.)
 
-| Instance | Source's args | Target's frame args | C1 |
+| Instance | Source's args | Target's key args | C1 |
 |:--- |:--- |:--- |:--- |
 | `IsTopologicalGroup.toContinuousInv` | `G`, `inst₁`, `inst₂` | `G` | ✓ |
 | `Semiring.toNatAlgebra` | `R` | `ℕ`, `R` | ✓ |
@@ -235,7 +208,7 @@ instance IsNoetherianRing.wfDvdMonoid {R : Type u_1} [inst₁ : CommSemiring R]
 public def isWeakeningEdge (s t : Expr) (otherPrems : Array Expr) :
     MetaM Bool := do
   let sArgs := s.getAppArgs
-  let tArgs ← frameArgs t
+  let tArgs ← keyArgs t.getAppFn t.getAppArgs
   let isClosed (e : Expr) : MetaM Bool := pure (!e.hasFVar && !e.hasExprMVar)
   -- Condition 1
   unless ← tArgs.allM (statableFrom sArgs isClosed) do return false
@@ -248,7 +221,7 @@ public def isWeakeningEdge (s t : Expr) (otherPrems : Array Expr) :
 Processes a declaration into an edge for the class graph, if appropriate.
 
 ---
-**Examples**
+**Examples** (each edge below abbreviates its `src`/`tgt` `Vertex` to that vertex's class name)
 
 * **Single-premise instance declaration.** One of the forgetful instances automatically generated by
   `class Monoid (M : Type u) extends Semigroup M, MulOneClass M, NPow M`:
@@ -300,7 +273,7 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     for arg in args do
       let argT ← arg.fvarId!.getType
       if (← isClass? argT).isSome then classPrems := classPrems.push arg
-      -- if _any_ argument is a proof hypothesis, then this instance is a lost cause
+      -- if any _non-class_ argument is a proof hypothesis, then this instance is a lost cause
       else if (← isProp argT) then return none
     -- source, if any, must be the last class premise
     let some src := classPrems.back? | return none
@@ -327,8 +300,9 @@ public structure ClassGraph where
   /-- Array of edges. This is what defines the class graph. -/
   edges : Array ClassEdge
   /--
-  `true` if the vertex's class's codomain is `Prop` or if all applications of the vertex's class
-  are subsingletons.
+  `true` only if all applications of the vertex's class are subsingletons; in particular, `true` for
+  every `Prop`-valued class in the graph. `ClassGraph.assemble` decides this per class, and only
+  attempts synthesis for classes in `subHeads`, so `false` is not a negative verdict.
   -/
   isSubsingleton : Vertex → Bool
   /-- Condensation of the class graph. -/
@@ -337,7 +311,8 @@ public structure ClassGraph where
 
 /--
 For a class with name `name`:
-* If `synthesize := true`, return `true` iff any application of this class is a subsingleton.
+* If `synthesize := true`, return `true` only if every application of this class is a subsingleton;
+  the converse can fail, since the verdict is decided by synthesis on the generic application.
 * If `synthesize := false`, return `true` iff this class is `Prop`-valued.
 
 ---
@@ -374,10 +349,21 @@ be precisely the one shown in our first code block above. Meanwhile, if `v` were
 block above.
 
 However, having said all this, for the sake of simplicity, we associate subsingleton-ness on a
-per-class basis, not on a per-vertex basis. As of Mathlib 4.32.0, the `ClassGraph` of all of Mathlib
+per-class basis, not on a per-vertex basis. As of Mathlib 4.32.1, the `ClassGraph` of all of Mathlib
 does not contain a single vertex for which the `Subsingleton` verdict would change. However, a
 per-vertex approach is more principled, and should be considered a (low-priority) opportunity for
 future work.
+
+---
+**Examples**
+
+```
+isSubsingletonClass `Nontrivial = true                      -- `Prop`-valued
+isSubsingletonClass `Fintype = true                         -- synthesis succeeds
+isSubsingletonClass `Fintype (synthesize := false) = false
+isSubsingletonClass `Module = false                         -- synthesis fails
+isSubsingletonClass `Nat = false                            -- not a class
+```
 -/
 def isSubsingletonClass (name : Name) (synthesize : Bool := true) : MetaM Bool := do
   let r ← withGenericClassApp name fun app body => do
@@ -400,6 +386,18 @@ weakening edges and taking note of classes that _may_ be subsingletons as it goe
 **Implementation notes**
 
 This is quite expensive, taking several seconds, and so we try to run it as seldomly as possible.
+
+---
+**Examples** (edges abbreviated as in `extractEdge?`)
+
+```
+-- instance Monoid.toSemigroup {α} [Monoid α] : Semigroup α
+-- instance Fintype.subsingleton (α : Type*) : Subsingleton (Fintype α)
+-- instance Prod.instMonoid [Monoid M] [Monoid N] : Monoid (M × N)
+ClassGraph.scanInstances #[`Monoid.toSemigroup, `Fintype.subsingleton, `Prod.instMonoid] =
+  (#[{ src := `Monoid, tgt := `Semigroup }], {`Fintype})
+ClassGraph.scanInstances #[] = (#[], {})
+```
 -/
 public def ClassGraph.scanInstances (names : Array Name) :
     MetaM (Array ClassEdge × HashSet Name) := do

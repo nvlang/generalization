@@ -35,7 +35,9 @@ public structure Vertex where
   /--
   Name of the typeclass.
 
-  Example:
+  ---
+  **Example**
+
   * `Module R M` → `Module`
   -/
   name : Name
@@ -177,22 +179,22 @@ First-order¹ syntactic matcher.
 **Examples**
 
 ```
-matchE {} ‹#0› ‹Nat› = some {#0 ↦ Nat}
-matchE {} ‹#0› ‹List Nat› = some {#0 ↦ List Nat}
-matchE {} ‹Prod #0 #1› ‹Prod Nat Int› = some {#0 ↦ Nat, #1 ↦ Int}
-matchE {} ‹Prod #0 #0› ‹Prod Nat Nat› = some {#0 ↦ Nat}
-matchE {} ‹Prod #0 #0› ‹Prod Nat Int› = none
-matchE {} ‹List #0› ‹List Nat› = some {#0 ↦ Nat}
-matchE {} ‹List #0› ‹Option Nat› = none
-matchE {} ‹List #0› ‹Nat› = none
-matchE {} ‹Nat› ‹Nat› = some {}
-matchE {} ‹Nat› ‹Int› = none
-matchE {#0 ↦ Nat} ‹#0› ‹Nat› = some {#0 ↦ Nat}
-matchE {#0 ↦ Nat} ‹#0› ‹Int› = none
-matchE {} ‹@#0 Nat› ‹List Nat› = none
+matchE? {} ‹#0› ‹Nat› = some {#0 ↦ Nat}
+matchE? {} ‹#0› ‹List Nat› = some {#0 ↦ List Nat}
+matchE? {} ‹Prod #0 #1› ‹Prod Nat Int› = some {#0 ↦ Nat, #1 ↦ Int}
+matchE? {} ‹Prod #0 #0› ‹Prod Nat Nat› = some {#0 ↦ Nat}
+matchE? {} ‹Prod #0 #0› ‹Prod Nat Int› = none
+matchE? {} ‹List #0› ‹List Nat› = some {#0 ↦ Nat}
+matchE? {} ‹List #0› ‹Option Nat› = none
+matchE? {} ‹List #0› ‹Nat› = none
+matchE? {} ‹Nat› ‹Nat› = some {}
+matchE? {} ‹Nat› ‹Int› = none
+matchE? {#0 ↦ Nat} ‹#0› ‹Nat› = some {#0 ↦ Nat}
+matchE? {#0 ↦ Nat} ‹#0› ‹Int› = none
+matchE? {} ‹@#0 Nat› ‹List Nat› = none
 ```
 -/
-partial def matchE (env : HashMap Nat Expr) (pattern target : Expr) :
+partial def matchE? (env : HashMap Nat Expr) (pattern target : Expr) :
     Option (HashMap Nat Expr) :=
   match pattern with
   -- `j` is the bvar's de Bruijn index. The first occurrence of a bvar in a pattern will match any
@@ -212,7 +214,7 @@ partial def matchE (env : HashMap Nat Expr) (pattern target : Expr) :
       if target.isApp &&
           pattern.getAppFn == target.getAppFn &&
           pattern.getAppArgs.size == target.getAppArgs.size then
-        (pattern.getAppArgs.zip target.getAppArgs).foldlM (fun env (p, t) => matchE env p t) env
+        (pattern.getAppArgs.zip target.getAppArgs).foldlM (fun env (p, t) => matchE? env p t) env
       else none
     else if pattern == target then some env else none
 
@@ -237,7 +239,7 @@ subsumes #[List (.bvar 0)] #[List Nat]  -- true
 -/
 public def subsumes (pattern target : Array Expr) : Bool :=
   pattern.size == target.size &&
-    ((pattern.zip target).foldlM (fun env (p, t) => matchE env p t) ({} : HashMap Nat Expr)).isSome
+    ((pattern.zip target).foldlM (fun env (p, t) => matchE? env p t) ({} : HashMap Nat Expr)).isSome
 
 
 /--
@@ -349,23 +351,23 @@ instead of `[#[.bvar 0], #[.bvar 1], #[.bvar 2], …]`) of all the arrays `#[p�
 have that `f p₁ … pₙ` subsumes `f a₁ … aₙ`.
 
 ---
-**Example**
+**Examples**
 
 ```
 subsumers #[.bvar 3] = [#[.bvar 0]]
 subsumers #[.lit 42] = [#[.bvar 0], #[42]]
-subsumers #[.bvar 0, List (Nat × (.bvar 0)), .lit 42] = [
-  #[.bvar 0, .bvar 1, .bvar 2]
-  #[.bvar 0, .bvar 1, 42]
-  #[.bvar 0, List (.bvar 1), .bvar 2]
-  #[.bvar 0, List (.bvar 1), 42]
-  #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), .bvar 2]
-  #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), 42]
-  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), .bvar 3]
-  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), 42]
-  #[.bvar 0, List (Prod Nat (.bvar 0)), .bvar 1]
-  #[.bvar 0, List (Prod Nat (.bvar 0)), 42]
-  #[.bvar 0, List (Prod Nat (.bvar 1)), .bvar 2]
+subsumers #[.bvar 0, List (Prod Nat (.bvar 0)), .lit 42] = [
+  #[.bvar 0, .bvar 1, .bvar 2],
+  #[.bvar 0, .bvar 1, 42],
+  #[.bvar 0, List (.bvar 1), .bvar 2],
+  #[.bvar 0, List (.bvar 1), 42],
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), .bvar 2],
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 0)), 42],
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), .bvar 3],
+  #[.bvar 0, List (Prod (.bvar 1) (.bvar 2)), 42],
+  #[.bvar 0, List (Prod Nat (.bvar 0)), .bvar 1],
+  #[.bvar 0, List (Prod Nat (.bvar 0)), 42],
+  #[.bvar 0, List (Prod Nat (.bvar 1)), .bvar 2],
   #[.bvar 0, List (Prod Nat (.bvar 1)), 42]
 ]
 ```
@@ -389,6 +391,19 @@ otherwise it is a lower bound for the number of subsumers. (If an argument is it
 then the arguments of that application also need to be (syntactically) different from every other
 argument of that application, as well as from every argument of the parent application, for the
 count to be accurate. And so on.)
+
+---
+**Examples**
+
+```
+shapeCount (.bvar 0) = 1
+shapeCount (.lit 42) = 2
+shapeCount Nat = 2
+shapeCount (List (Prod Nat (.bvar 0))) = 4
+(subsumers #[List (Prod Nat (.bvar 0))]).length = 4
+shapeCount (Prod (.bvar 0) (.bvar 0)) = 2
+(subsumers #[Prod (.bvar 0) (.bvar 0)]).length = 3
+```
 -/
 partial def shapeCount : Expr → Nat
   | .bvar _ => 1
@@ -402,6 +417,16 @@ partial def shapeCount : Expr → Nat
 Walks `args` and counts multiplicities of colors, returning a map from colors to their
 multiplicities. In other words, for a given expression `e`, the map will indicate how often `e`
 occurs in `args` (be it as a top-level argument or an argument within an argument, etc.).
+
+---
+**Examples**
+
+```
+colorMults #[] = {}
+colorMults #[Nat, Nat, Int] = {Nat ↦ 2, Int ↦ 1}
+colorMults #[List Nat, Nat] = {List Nat ↦ 1, Nat ↦ 2}
+colorMults #[Prod (.bvar 0) (.bvar 0)] = {Prod (.bvar 0) (.bvar 0) ↦ 1, .bvar 0 ↦ 2}
+```
 -/
 partial def colorMults (args : Array Expr) : HashMap Expr Nat :=
   args.foldl (init := {}) go
@@ -421,8 +446,19 @@ $$
 **Note:** Our implementation of the $\texttt{bell}$ function (`bellClamped`) returns `2³²` for
 inputs `>8`, so our computation of the bound is not mathematically faithful to the equation above
 when any of the `mult` is `>8`.
+
+---
+**Examples**
+
+```
+subsumerCountBound #[]                          = 1
+subsumerCountBound #[List (Prod Nat (.bvar 0))] = 4
+(subsumers #[List (Prod Nat (.bvar 0))]).length = 4
+subsumerCountBound #[Prod (.bvar 0) (.bvar 0)]  = 4
+(subsumers #[Prod (.bvar 0) (.bvar 0)]).length  = 3
+```
 -/
-def enumBudget (args : Array Expr) : Nat :=
+def subsumerCountBound (args : Array Expr) : Nat :=
   let shapes := args.foldl (init := 1) fun shapes' arg => shapes' * shapeCount arg
   let merges := (colorMults args).fold (init := 1) fun merges' _ k => merges' * bellClamped k
   shapes * merges
@@ -432,13 +468,24 @@ def enumBudget (args : Array Expr) : Nat :=
 If the number of subsumers of `v.pattern` isn't estimated to exceed `maxCombined` (default 2048),
 then all proper subsumers of `v.pattern` (i.e., subsumers of `v.pattern` that are not equal to
 `v.pattern`) are returned as an array of vertices, where each output vertex `w` inherits all fields
-from `v` except for `v.pattern`, which instead is set to the subsumer.
+from `v` except for `v.pattern`, which instead is set to the subsumer. If the estimate does exceed
+`maxCombined`, `#[]` is returned.
 
-If the estimated number of subsumers of `v.pattern` _does_ exceed `maxCombined`, then `#[]` is
-returned.
+---
+**Examples**
+
+```
+-- v.pattern = #[List (.bvar 0)]
+v.properSubsumers   = #[{ v with pattern := #[.bvar 0] }]
+v.properSubsumers 1 = #[]
+-- v.pattern = #[.bvar 0, .bvar 0]
+v.properSubsumers   = #[{ v with pattern := #[.bvar 0, .bvar 1] }]
+-- v.pattern = #[.bvar 0, .bvar 1]
+v.properSubsumers   = #[]
+```
 -/
 public def Vertex.properSubsumers (v : Vertex) (maxCombined : Nat := 2048) : Array Vertex :=
-  if enumBudget v.pattern > maxCombined then #[]
+  if subsumerCountBound v.pattern > maxCombined then #[]
   else (subsumers v.pattern).foldl (init := #[]) fun out args =>
     if args == v.pattern then out
     else out.push { v with pattern := args }
@@ -459,8 +506,7 @@ vertices.
 
 * `Small.{0} α` will match `Small.{0} α` and `Small α` (the latter we understand to be
   universe-polymorphic).
-* `Small.{123} α` will only match `Small α`, as there is no specific `Small.{123} α` vertex in the
-  class graph.
+* `Small α` will only match `Small α`.
 -/
 public def Vertex.witnesses (query : Vertex) (includeSubsumers : Bool := false) :
     Array Vertex :=

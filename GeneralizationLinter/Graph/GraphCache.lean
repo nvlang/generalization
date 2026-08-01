@@ -26,7 +26,7 @@ initialize importedScanRef : IO.Ref (Option (Array ClassEdge × HashSet Name)) �
 initialize classGraphCacheRef : IO.Ref (Option (UInt64 × ClassGraph)) ← IO.mkRef none
 
 
-/-- For debugging. -/
+/-- For debugging: counts how many times `cachedClassGraph` has rebuilt the graph. -/
 initialize graphBuildCountRef : IO.Ref Nat ← IO.mkRef 0
 
 
@@ -35,7 +35,7 @@ public def localInstanceFingerprint : MetaM UInt64 := do
   let env ← getEnv
   let instances := (instanceExtension.getState env).instanceNames
   return env.constants.map₂.foldl (init := (7 : UInt64)) fun h name const =>
-    -- `name` is the name of a local instance, and `const` is the `ConstantInfo` associated with it.
+    -- `name` is the name of a local constant, and `const` is the `ConstantInfo` associated with it.
     if instances.contains name then mixHash h (mixHash name.hash const.type.hash) else h
 
 

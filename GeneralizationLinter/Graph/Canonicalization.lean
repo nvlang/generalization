@@ -26,8 +26,10 @@ which is the process we refer to as ***canonicalization***, and back, which we r
   which are slots that we don't want to index our class graph with. For instance, for `Module R M
   inst₁ inst₂`, the key slots are the first two parameter slots (corresponding to `R` and `M`).
 * `canonArg` canonicalizes a single argument. For example, for `Module R M`, this means `R` and `M`
-  become `bvar 0` and `bvar 1`. For `Pow α ℕ`, this means `α` becomes `bvar 0` and `ℕ` remains `ℕ`.
+  become `#0` and `#1`. For `Pow α ℕ`, this means `α` becomes `#0` and `ℕ` remains `ℕ`.
 * `canonKey` canonicalizes a class application into a `Key` that we query the class graph with.
+* `mkClassApp?` takes a class name and its key arguments, and reifies them into a proper class
+  application.
 * `reifyKey?` takes a class name and a `pattern` and corresponding `subst`, and reifies them into a
   proper class application.
 -/
@@ -38,25 +40,25 @@ open Std (HashMap)
 /-! ## Head Helpers -/
 
 /--
-`isTypeConstructor e` is `true` iff `e` is a (possibly nullary) type constructor
-constant.
+`isTypeFormerConst e` is `true` iff `e` is a (possibly nullary) type former
+constant, i.e., a constant whose type ends in a `Sort`.
 
 ---
 **Examples**
 
-`isTypeConstructor` returns `true` on the following:
+`isTypeFormerConst` returns `true` on the following:
 
-* Nullary type constructors: `Nat`, etc.
-* Unary type constructors: `Group`, `List`, etc.
-* Binary type constructors: `Prod`, `And`, etc.
+* Nullary type formers: `Nat`, etc.
+* Unary type formers: `Group`, `List`, etc.
+* Binary type formers: `Prod`, `And`, etc.
 * etc.
 
-`isTypeConstructor` returns `false` on the following:
+`isTypeFormerConst` returns `false` on the following:
 
-* Constants that are not type constructors: `And.intro`, `Nat.succ`, etc.
+* Constants that are not type formers: `And.intro`, `Nat.succ`, etc.
 * Things that are not constants: `3`, `#[3]`, `{}`, `[]`, etc.
 -/
-public def isTypeConstructor (env : Environment) (e : Expr) : Bool :=
+public def isTypeFormerConst (env : Environment) (e : Expr) : Bool :=
   match e with
   | .const c _ => (env.find? c).any (·.type.getForallBody.isSort)
   | _          => false
@@ -64,14 +66,14 @@ public def isTypeConstructor (env : Environment) (e : Expr) : Bool :=
 initialize synonymFormerCacheRef : IO.Ref (Std.HashMap Name Bool) ← IO.mkRef {}
 
 /--
-Is `h` a "type-synonym former", i.e., a former that unfolds to one of its own arguments.
+Is `h` a "synonym type former", i.e., a former that unfolds to one of its own arguments.
 
 ---
 **Examples**
 
 ```
-isSynonymFormer `Monoid     -- `false`
-isSynonymFormer `OrderDual  -- `true`
+isSynonymFormer `Monoid = false
+isSynonymFormer `OrderDual = true
 ```
 -/
 public def isSynonymFormer (h : Name) : MetaM Bool := do
@@ -95,8 +97,21 @@ Expr` is the type of a binder, stripped of gadgets (`outParam` & co.).
 
 **Note:**
 * If `false` is returned, it doesn't guarantee that `fvar` is _not_ recoverable.
-* If `true` is returned, it doesn't guarantee that `fvar` _is_ recoverable. Example:
-  `recoverableFrom ‹Fin (n % 2)› n = true`, even though `n` is not recoverable from this expression.
+* If `true` is returned, it doesn't guarantee that `fvar` _is_ recoverable: descending into
+  `f a₁ … aₙ` assumes `f` is injective in each `aᵢ`, which holds for inductive formers but not for
+  constants that can unfold. Example: given `(X Y : C) (f : X ⟶ Y)` we return `true` for both `X`
+  and `Y`, since both occur in `@Quiver.Hom C _ X Y` — yet `Quiver.Hom` is a projection, and in a
+  category whose hom-types are all `PUnit`, `f`'s type pins neither.
+
+---
+**Examples**
+
+```
+recoverableFrom ‹α → α → Prop› α = true
+recoverableFrom ‹Type› α = false
+-- `F` a free variable
+recoverableFrom ‹F α› α = false
+```
 -/
 partial def recoverableFrom (e : Expr) (fvar : FVarId) : Bool :=
   match e with
@@ -161,20 +176,27 @@ def keySlots (head : Name) : MetaM (Array Bool) := do
 
 /--
 The ***key arguments*** of an application `fn a₁ … aₙ` (`vals = #[a₁, …, aₙ]`), in accordance with
-`keySlots fn`.
+`keySlots` applied to `fn`'s head constant. If `fn` isn't a constant, all of `vals` is kept.
+
+---
+**Examples**
+
+```
+-- class Module (R M : Type*) [Semiring R] [AddCommMonoid M]
+keyArgs ‹Module› #[R, M, inst₁, inst₂] = #[R, M]
+-- structure Subtype {α : Sort u} (p : α → Prop)
+keyArgs ‹Subtype› #[α, p] = #[p]
+-- `f` a free variable
+keyArgs ‹f› #[a, b] = #[a, b]
+```
 -/
-def keyArgs (fn : Expr) (vals : Array Expr) : MetaM (Array Expr) := do
+public def keyArgs (fn : Expr) (vals : Array Expr) : MetaM (Array Expr) := do
   let slots ← match fn.constName? with
     | some head => keySlots head
     | none => pure #[] -- non-const head ⟹ keep all vals
   pure <| vals.zipIdx.filterMap fun (val, i) =>
     if slots[i]?.getD true then some val else none -- keep by default
 
-
-def frameSlots? (name : Name) : MetaM (Option (Array Bool)) := do
-  let some info := (← getEnv).find? name | return none
-  forallTelescope info.type fun params _ =>
-    some <$> params.mapM fun p => return !(← p.fvarId!.getDecl).binderInfo.isInstImplicit
 
 /--
 Given `mask = #[b₁, …, bₙ]` and `vals = #[e₁, …, eₘ]`:
@@ -186,7 +208,7 @@ Given `mask = #[b₁, …, bₙ]` and `vals = #[e₁, …, eₘ]`:
 **Example**
 
 ```
-placeAtSlots #[false, true] #[e₁] = some #[none, some e₁]
+placeAtSlots? #[false, true] #[e₁] = some #[none, some e₁]
 ```
 -/
 def placeAtSlots? (mask : Array Bool) (vals : Array Expr) : Option (Array (Option Expr)) := Id.run do
@@ -206,7 +228,7 @@ def placeAtSlots? (mask : Array Bool) (vals : Array Expr) : Option (Array (Optio
 Used to strip the universe-level arguments off the heads of type formers used within a key slot. We
 delegate all handling of universe levels to `Vertex.levels`.
 -/
-public def eraseHeadLevels : Expr → Expr
+public def eraseConstLevels : Expr → Expr
   | .const c _ => .const c []
   | e => e
 
@@ -217,8 +239,8 @@ Retrieves the value of a `Nat`-valued argument.
 ---
 **Examples**
 
-* `.lit (.natVal n)` → `n`
-* `@OfNat.ofNat ℕ n _` → `n`
+* `.lit (.natVal n)` → `some n`
+* `@OfNat.ofNat ℕ n _` → `some n`
 -/
 public def natLitOf? : Expr → Option Nat
   | .lit (.natVal n) => some n
@@ -233,9 +255,9 @@ public def natLitOf? : Expr → Option Nat
 As we walk an `Expr` (generally, a telescope), this monad helps us keep track of
 two things:
 
-* `HashMap FVarId Nat`: For each `fvar id` (where `id` is some `FVarId`) we
-  encounter in the expression we're parsing, we add an entry `id → k` to this
-  map to note to which canonical `bvar k` we've mapped `fvar id`.
+* `HashMap FVarId Nat`: For each `fvar id` (where `id` is some `FVarId`) that we
+  canonicalize as a whole argument, we add an entry `id → k` to this map to note
+  to which canonical `bvar k` we've mapped `fvar id`.
 * `Array Expr`: This keeps track of the specific carriers we've collected thus
   far, ordered by their de Bruijn indices.
 
@@ -253,10 +275,10 @@ Canonicalize a single binder/argument.
 
 * `ℕ` → `ℕ`
 * `3` → `3`
-* Applied over the arguments of `Group G` → `Group #0`
-* Applied over the arguments of `Module R R` → `Module #0 #0`
-* Applied over the arguments of `Pow α ℕ` → `Pow #0 ℕ`
-* Applied over the arguments of `OfNat α 1` → `OfNat #0 1`
+* `Group G` → `Group #0`
+* `Module R R` → `Module #0 #0`
+* `Pow α ℕ` → `Pow #0 ℕ`
+* `OfNat α 1` → `OfNat #0 1`
 -/
 public partial def canonArg (e : Expr) : CanonVarsM Expr := do
   let e ← whnfR e.consumeMData -- strip annotations and reduce to WHNF
@@ -272,20 +294,20 @@ public partial def canonArg (e : Expr) : CanonVarsM Expr := do
   | _ =>
     if let some n := natLitOf? e then return mkRawNatLit n -- nat literals are kept as-is
     let fn := e.getAppFn
-    if isTypeConstructor (← getEnv) fn then
-      -- If `e` is "f a₁ … aₙ", with "f" a type constructor, then
-      -- canonicalize "a₁ … aₙ" to "a₁' … aₙ'" and return "f a₁' … aₙ'".
-      -- Note that "f" may be a nullary type constructor, e.g., `Nat`.
+    if isTypeFormerConst (← getEnv) fn then
+      -- If `e` is "f a₁ … aₙ", with "f" a type constructor, then canonicalize the key arguments
+      -- among "a₁ … aₙ" (see `keyArgs`) to "b₁ … bₖ" and return "f b₁ … bₖ", with "f" stripped of
+      -- its universe levels. Note that "f" may be a nullary type former, e.g., `Nat`.
       let kept ← keyArgs fn e.getAppArgs
-      return mkAppN (eraseHeadLevels fn) (← kept.mapM canonArg)
+      return mkAppN (eraseConstLevels fn) (← kept.mapM canonArg)
     -- If `e` has no "variables", i.e., it is essentially a constant or tower of constants, then we
     -- just leave it as is.
     else if !e.hasFVar && !e.hasMVar && !e.hasLevelParam then
       return e
     else
-      -- `e` contains "variables", is not merely an fvar, and is either not function app or "f" is
-      -- not a type constructor. In this case, we abstract `e` to a fresh bvar, and record `e` so
-      -- that `reifyKey?` can recover it later on.
+      -- `e` contains "variables", is not merely an fvar, and is either not a function app, or is
+      -- one whose "f" is not a type constructor. In this case, we abstract `e` to a fresh bvar,
+      -- and record `e` so that `reifyKey?` can recover it later on.
       let (m, carriers) ← get
       let k := carriers.size
       set (m, carriers.push e)
@@ -305,9 +327,9 @@ Canonicalized universe arguments for a head with universe arguments `lvls`.
 **Examples**
 
 ```
-universeLevelsOf [0, 1] = concrete #[0, 1]
-universeLevelsOf [u]    = polymorphic      -- `u` is a universe variable
-universeLevelsOf []     = concrete #[]     -- monomorphic class, e.g., `Fact`
+universeLevelsOf [0, 1] = .concrete #[0, 1]
+universeLevelsOf [u]    = .polymorphic     -- `u` is a universe variable
+universeLevelsOf []     = .concrete #[]    -- monomorphic class, e.g., `Fact`
 ```
 -/
 public def universeLevelsOf (lvls : List Level) : UniverseLevels :=
@@ -325,11 +347,15 @@ Given an `Expr` of a class application, canonicalize it into a `Key`.
 * The head name (which sets `Vertex.name`) and canonicalized arguments (which set `Vertex.pattern`)
   are taken from the `whnfR` form of the expression, so for example `IsNoetherianRing R`, which
   reduces to `IsNoetherian R R`, would have ```Vertex.name := ``IsNoetherian``` and `Vertex.pattern
-  := #[#0, #0]`.
+  := #[.bvar 0, .bvar 0]`.
 * For a parametric class binder like `∀ prefix, C args`, the body (`C args`) determines the `Vertex`
   fields, while the parametric index in the prefix is abstracted to a bvar. So, for example, for `[∀
   i : ι, Monoid (f i)]`, where `f : ι → Type*` is some free variable, we'd have ``name := `Monoid``,
   `pattern := #[.bvar 0]`, `subst := #[f (.bvar 0)]`, and `forallArity := 1`.
+* If the body of such a Π-binder doesn't canonicalize to a constant-headed application (so the head
+  name would come out `.anonymous`), we instead canonicalize the whole Π-expression as one opaque
+  carrier. For `∀ n : ℕ, P n`, with `P` a free variable, this yields `name := .anonymous`, `pattern
+  := #[]`, `subst := #[∀ n : ℕ, P n]`, and `forallArity := 0`.
 
 ---
 **Examples**
@@ -387,7 +413,7 @@ public def canonKey (e : Expr) : MetaM Key := do
   else
     plainKey e0
 where
-  /-- Canonicalize a non-parametric class application. -/
+  /-- Canonicalize a class application without decomposing any Π-prefix. -/
   plainKey (e0 : Expr) : MetaM Key := do
     let (c, (_, subst)) ← (canonArg e0).run ({}, #[])
     let levels := match (← whnfR e0).getAppFn with
@@ -407,17 +433,17 @@ where
 Returns pair consisting of:
 
 1.  A constant named `name` at fresh level metavariables, and
-2.  the constant's type.
+2.  the constant's type, instantiated at those metavariables.
 
 Returns `none` if `name` isn't in the environment.
 
 ---
 **Implementation notes**
 
-The fresh universe level metavariables is what enables us to reify a universe-polymorphic class
-without having to pin its levels prematurely. Note that class graph vertices don't store universe
-levels per se (`Vertex.levels` does not contain levels per se), so we have to add levels to `name`
-in some way anyhow, and we're just choosing not to give it arbitrarily pinned levels, but rather
+The fresh universe level metavariables are what enable us to reify a universe-polymorphic class
+without having to pin its levels prematurely. Note that reification is handed only a class name, a
+`pattern` and a `subst` — never a `Vertex.levels` tag — so we have to add levels to `name` in some
+way anyhow, and we're just choosing not to give it arbitrarily pinned levels, but rather
 giving it fresh level metavariables and letting downstream unification pin them if and where
 necessary.
 -/
@@ -428,9 +454,9 @@ def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
 
 
 /--
-***Reifies*** a class `name` at the frame arguments `frame` into a valid `Expr`, wrapped as an
-`Option` (if `name` is not a constant defined in the environment, or if something else went wrong,
-then `none` is returned).
+***Reifies*** a class `name` at its key arguments `vals` (see `keySlots`) into a valid `Expr`,
+wrapped as an `Option` (if `name` is not a constant defined in the environment, or if something else
+went wrong, then `none` is returned).
 
 ---
 **Example**
@@ -446,8 +472,8 @@ To know what exactly it'd be suggesting (e.g., so that it can verify said sugges
 linter needs to construct `Module S A` somehow — the weakened binder's type. To do this, it calls
 `replaceBinderType?` with `Algebra S A` as an `Expr` and the replacement `Vertex` for `Module S A`.
 This in turn then computes the key of `Algebra S A` (which has `subst = #[S, A]`), and then calls
-``reifyKey? `Module #[bvar 0, bvar 1] #[S, A]``, which then calls ``mkClassApp? `Module #[S, A]
-(useKeySlots := true)``, which will in turn output the `Expr` corresponding to `Module S A` (wrapped
+``reifyKey? `Module #[.bvar 0, .bvar 1] #[S, A]``, which then calls ``mkClassApp? `Module #[S, A]``,
+which will in turn output the `Expr` corresponding to `Module S A` (wrapped
 as an `Option`; if `` `Module `` were not a constant defined in the environment, or if something
 else went wrong, then `mkClassApp?` would return `none`).
 
@@ -455,9 +481,8 @@ Note that, in constructing its output, `mkClassApp?` may perform instance synthe
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
 (instance metavariables spawned by `mkClassApp?`) via instance synthesis.
 -/
-public def mkClassApp? (name : Name) (vals : Array Expr) (useKeySlots : Bool := false) :
-    MetaM (Option Expr) := do
-  let some mask ← (if useKeySlots then some <$> keySlots name else frameSlots? name) | return none
+public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) := do
+  let mask ← keySlots name
   let some slots := placeAtSlots? mask vals | return none
   let some (head, sig) ← freshHeadAndSig? name | return none
   let (margs, binderInfos, _) ← forallMetaTelescope sig
@@ -514,9 +539,10 @@ public partial def reifyArg? (e : Expr) (subst : Array Expr) : MetaM (Option Exp
     -- is nullary, we return `e` as is. Example: `e = ℝ = .const Real []` (so that ``h = `Real``).
     if args.isEmpty then return some e
     let keep ← keySlots h
-    -- Should be unreachable, since `keySlots h` returns `#[]` only if `h` is nullary (or if `h` is
-    -- not in the environment), which the `args.isEmpty` check (and the `| return some e` fallback
-    -- in `let some h := e.getAppFn.constName? | return some e`) already ruled out.
+    -- The `args.isEmpty` check above already rules out the case where `keySlots h` is `#[]` because
+    -- `h` is nullary; what it doesn't rule out is `h` not being in the environment, but this can't
+    -- really happen for a pattern entry, since its constants come from an `Expr` elaborated in this
+    -- same environment.
     if keep.isEmpty then return some e
     let mut vals : Array Expr := #[]
     for arg in args do
@@ -525,11 +551,13 @@ public partial def reifyArg? (e : Expr) (subst : Array Expr) : MetaM (Option Exp
       vals := vals.push arg'
     -- `return none` branch taken very rarely (<1% of cases), corresponding to cases where
     -- `canonArg` canonicalized a type former that was only _partially_ applied, so that `vals.size
-    -- < keep.size`. Example: #TODO
+    -- < keep.size`. Example: `reifyArg? ‹Except #0› #[ℕ] = none`.
     let some slots := placeAtSlots? keep vals | return none
     -- Let `mkAppOptM` do the heavy lifting. `return none` branch taken very rarely (<1% of cases),
     -- corresponding to cases of type former applications where the former's universe params aren't
-    -- fully determined by the args in `slots`, leading to `mkAppOpt` returning `none`. Example: #TODO
+    -- fully determined by the args in `slots`, leading to `mkAppOptM` throwing (it returns an
+    -- `Expr`, not an `Option Expr`, and signals failure by throwing).
+    -- Example: `reifyArg? ‹ULift #0› #[ℕ] = none`.
     try some <$> mkAppOptM h slots catch _ => return none
 
 
@@ -541,10 +569,13 @@ Returns `none` if `pattern` needs more values than `subst` provides, or if elabo
 failed at any point.
 
 ---
-**Examples**
+**Example**
 
 ```
-TODO
+-- class Module (R M : Type*) [Semiring R] [AddCommMonoid M]
+-- In a context with `S A : Type` and instances `[CommSemiring S] [Semiring A]`:
+reifyKey? `Module #[.bvar 0, .bvar 1] #[S, A] = some ‹@Module S A inst₁ inst₂›
+-- (`inst₁` and `inst₂` are synthesized by `mkClassApp?`.)
 ```
 -/
 public def reifyKey? (name : Name) (pattern subst : Array Expr) : MetaM (Option Expr) := do
@@ -556,7 +587,7 @@ public def reifyKey? (name : Name) (pattern subst : Array Expr) : MetaM (Option 
     -- `reifyArg?`.
     let some e ← reifyArg? p subst | return none
     entries := entries.push e
-  mkClassApp? name entries (useKeySlots := true)
+  mkClassApp? name entries
 
 
 /--
@@ -565,7 +596,19 @@ fresh local hypotheses `a₁`, …, `aₙ` plus the WHNF-reduced body of `name`'
 corresponds to the signature's conclusion only if said conclusion has no leading `∀`-expressions
 that `forallTelescopeReducing` would peel off).
 
+Returns `none` without ever running `k` if `name` isn't in the environment, or if the generic
+application isn't a class application.
+
 For motivation, see `isSubsingletonClass`.
+
+---
+**Examples**
+
+```
+withGenericClassApp `Small k = k ‹@Small.{?w, ?v} α› ‹Prop›
+withGenericClassApp `Module k = k ‹@Module.{?u, ?v} R M inst₁ inst₂› ‹Type (max ?u ?v)›
+withGenericClassApp `Nat.succ k = none
+```
 -/
 public def withGenericClassApp {α} (name : Name) (k : Expr → Expr → MetaM (Option α)) :
     MetaM (Option α) := do

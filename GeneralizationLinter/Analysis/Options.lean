@@ -18,7 +18,7 @@ Configurable options for the typeclass generalization linter.
 -/
 
 /--
-Controls whether typeclass weakenings that would involve splitting a single hypothesis into two
+Controls whether typeclass weakenings that would involve splitting a single hypothesis into multiple
 weaker ones should be suggested. Suggested weakenings that split typeclass hypotheses can violate
 diamond coherence. Measures are in place to significantly reduce the frequency of such false
 positives, but they do not eliminate them, which is why this option is set to `.forbid` by default.
@@ -30,7 +30,7 @@ public inductive SplitPolicy where
   Allow weakenings that would split a typeclass hypothesis up. However, if a different weakening is
   available which would not split up the typeclass hypothesis, choose that weakening instead (even
   if it is technically less general).
-   -/
+  -/
   | allow
   /--
   Always suggest the most general weakening, even if that means suggesting a split where a less
@@ -51,7 +51,7 @@ Configuration for the typeclass generalization linter.
 -/
 public structure LinterConfig where
   /--
-  Establishes how classes that are not vertices of the class graph should be handled.
+  Establishes how requirements that cannot be found in the class graph should be handled.
   -/
   absencePolicy : AbsencePolicy := .failClosed
   /--
@@ -67,8 +67,8 @@ public structure LinterConfig where
   generationHeartbeats : Nat := 4_000_000
 
   /--
-  Controls whether typeclass weakenings that would involve splitting a single hypothesis into two
-  weaker ones should be suggested.
+  Controls whether typeclass weakenings that would involve splitting a single hypothesis into
+  multiple weaker ones should be suggested.
 
   Setting this option to `.allow` will make the linter suggest splitting a typeclass hypothesis only
   if it could not be weakened otherwise. Setting this option to `.prefer` will make the linter
@@ -77,14 +77,14 @@ public structure LinterConfig where
 
   **Note:** Suggested weakenings that split typeclass hypotheses can violate diamond coherence.
 
-  **Note:** The user can set this property via `set_option generalizeTypeclasses.split "…"`, where …
-  is `forbid`, `allow`, or `prefer` (note: no dot in front).
+  **Note:** The user can set this property via `set_option generalizeTypeclasses.splitPolicy "…"`,
+  where … is `forbid`, `allow`, or `prefer` (note: no dot in front).
   -/
   splitPolicy : SplitPolicy := .forbid
 
   -- Options for experimental ablation measurements.
   verify : Bool := true
-  subsumption : Bool := true
+  includeSubsumers : Bool := true
   conclusionGuard : Bool := true
   redundancyGuard : Bool := true
 
@@ -96,15 +96,15 @@ public register_option linter.generalizeTypeclasses : Bool := {
     descr := "flag theorems with non-explicit typeclass hypotheses that could be weakened."
 }
 
-public register_option generalizeTypeclasses.split : String := {
+public register_option generalizeTypeclasses.splitPolicy : String := {
   defValue := "forbid"
   descr := "controls whether typeclass weakenings that would involve splitting a single hypothesis
-    into two weaker ones should be suggested. Suggested weakenings that split typeclass hypotheses
-    can violate diamond coherence. Measures are in place to significantly reduce the frequency of
-    such false positives, but they do not eliminate them, which is why this option is set to
-    \"forbid\" by default. Setting this option to \"allow\" will make the linter suggest splitting
-    a typeclass hypothesis only if it could not be weakened otherwise. Setting this option to
-    \"prefer\" will make the linter always suggest the most general weakening, even if that means
+    into multiple weaker ones should be suggested. Suggested weakenings that split typeclass
+    hypotheses can violate diamond coherence. Measures are in place to significantly reduce the
+    frequency of such false positives, but they do not eliminate them, which is why this option is
+    set to \"forbid\" by default. Setting this option to \"allow\" will make the linter suggest
+    splitting a typeclass hypothesis only if it could not be weakened otherwise. Setting this option
+    to \"prefer\" will make the linter always suggest the most general weakening, even if that means
     suggesting a split where a less general non-splitting weakening would be available."
 }
 
@@ -143,7 +143,7 @@ public register_option generalizeTypeclasses.verify : Bool := {
 
 -- This option will (almost definitely) not be part of the final API. It is used for thesis
 -- experiments.
-public register_option generalizeTypeclasses.subsumption : Bool := {
+public register_option generalizeTypeclasses.includeSubsumers : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether subsumption should be used
     when querying the class graph."
@@ -170,13 +170,27 @@ public register_option generalizeTypeclasses.stats : Bool := {
   descr := "[For experiments only] log a GL_STATS info message for each linted declaration."
 }
 
-public def linterConfigOfOptions (opts : Lean.Options) : LinterConfig :=
+/--
+Reads the option-backed fields out of `opts`; `absencePolicy`, which has no corresponding option,
+keeps its default.
+
+---
+**Examples**
+
+```
+LinterConfig.ofOptions {} = {}
+LinterConfig.ofOptions {generalizeTypeclasses.splitPolicy ↦ "prefer"} = {splitPolicy := .prefer}
+LinterConfig.ofOptions {generalizeTypeclasses.splitPolicy ↦ ".prefer"} = {}
+```
+-/
+public def LinterConfig.ofOptions (opts : Lean.Options) : LinterConfig :=
   {
-    splitPolicy := (SplitPolicy.ofString? (generalizeTypeclasses.split.get opts)).getD .forbid,
+    splitPolicy :=
+      (SplitPolicy.ofString? (generalizeTypeclasses.splitPolicy.get opts)).getD .forbid,
     generationHeartbeats := generalizeTypeclasses.generationHeartbeats.get opts,
     perCandidateHeartbeats := generalizeTypeclasses.perCandidateHeartbeats.get opts,
     verify := generalizeTypeclasses.verify.get opts,
-    subsumption := generalizeTypeclasses.subsumption.get opts,
+    includeSubsumers := generalizeTypeclasses.includeSubsumers.get opts,
     conclusionGuard := generalizeTypeclasses.conclusionGuard.get opts,
     redundancyGuard := generalizeTypeclasses.redundancyGuard.get opts
   }
