@@ -1,8 +1,13 @@
 name: Deploy docs
 
 on:
-  push:
-    branches: [main]
+  # Daily rather than per-push, as Batteries does: without a docs cache every run pays the full
+  # ~12-minute `coreDocs` build, and the API reference rarely changes faster than that is worth.
+  # Off the hour because scheduled runs queue behind everyone else's on-the-hour crons.
+  # Note GitHub only runs `schedule` on the default branch, and suspends it after 60 days of
+  # repository inactivity -- use the manual trigger to publish a change immediately.
+  schedule:
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
