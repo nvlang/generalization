@@ -32,7 +32,7 @@ public inductive WrapperClassification where
   being adjusted. Ensure that `gradedWeakenings`'s `SourceIntact` verdicts remain accurate in such
   cases would require a significant amount of machinery, and `omit`s are relatively rare in Mathlib,
   so the compromise we made was to skip declarations wrapped in or affected by `omit`s by default,
-  but provide the option `generalizationLinter.acceptOmits`, which, when set to `true`, will lint
+  but provide the option `generalizeTypeclasses.acceptOmits`, which, when set to `true`, will lint
   these same declarations as if there were no `omit`s at all. The idea is that the user is then
   aware of the caveat that `omit`s impose on suggestions' `SourceIntact` verdicts when `omit`s are
   involved.
@@ -85,13 +85,13 @@ then calling `peelWrappers? stx` would return `some (#[‹open Nat›, ‹set_op
 those returned; this is because we either ignore `omit`s entirely or, if `acceptOmits` is `false`
 (which it is by default), declarations with `omit`s are skipped by the linter altogether.)
 
-If the declaration includes any other wrappers (`omit … in …` with holes, `attribute … in …`,
-`include … in …`, etc.), return `none`. This is because `peelWrappers?`'s output is passed on to
-`rewrapTerm` to get rewrapped into a _term_ instead of a command or declaration (which would be much
-harder to deal with further down the line), and only `open` and `set_option` are the only wrappers
-of this kind that are available in `Parser.Command.Term`.
+If the declaration includes any other wrappers (e.g. `attribute … in …`), return `none`. This is
+because `peelWrappers?`'s output is passed on to `rewrapTerm` to get rewrapped into a _term_ instead
+of a command or declaration (which would be much harder to deal with further down the line), and
+`open` and `set_option` are the only wrappers of this kind that are available in
+`Parser.Command.Term`.
 
-There's <2000 declarations in Mathlib v4.32.0 that use wrappers that lead `peelWrappers?` to return
+There's >2000 declarations in Mathlib v4.32.1 that use wrappers that lead `peelWrappers?` to return
 `none` (which in turn prevents the linter from being able to emit any suggestions).
 
 ---
@@ -260,7 +260,7 @@ public def bodyTermOfDeclVal? (dval : Syntax) : TermElabM (Option Syntax) := do
       mkNullNode,
       mkAtom "}"
     ]
-  -- We skip `Parser.Term.whereDecls`; see implementation notes.
+  -- We skip e.g. `Parser.Command.declValEqns`.
   else return none
 
 
@@ -334,7 +334,10 @@ public def foldSetOptionWrappers? {m : Type → Type} [Monad m] (wrappers : Arra
   return some opts
 
 
-/-- Returns all child nodes of kind `kind`.  -/
+/--
+Given `stx : Syntax`, returns all descendants of `stx` of kind `kind` (possibly including `stx`
+itself).
+-/
 public partial def collectNodes (kind : SyntaxNodeKind) : Syntax → Array Syntax
   | stx@(.node _ kind' args) =>
     let inner := args.flatMap (collectNodes kind)

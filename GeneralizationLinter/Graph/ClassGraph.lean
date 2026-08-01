@@ -29,7 +29,7 @@ Builds the class graph from the environment.
 **References**
 
 * Alex J. Best. 2023. Automatically Generalizing Theorems Using Typeclasses. In Fifth Workshop on
-  Formal Mathematics for Mathematicians, April 19, 2023. CEUR Workshop Proceedings. Retrieved from
+  Formal Mathematics for Mathematicians. CEUR Workshop Proceedings. Retrieved from
   [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-3377/fmm12.pdf).
 -/
 
@@ -57,7 +57,7 @@ public def isSortTyped (a : Expr) : MetaM Bool :=
 
 /--
 The non-instance-implicit arguments of a class application. These are the arguments that are used by
-`reifyClass` to reify a suggestion candidate. We call these arguments the ***frame arguments*** or
+`mkClassApp` to reify a suggestion candidate. We call these arguments the ***frame arguments*** or
 ***frame*** of a class application.
 
 There can be some overlap between frame arguments and targeted binders, which is fine, because we're
@@ -208,18 +208,18 @@ than the sense in which the term is used for `sourceArg?`.)
 
 | Instance | Source's args | Target's frame args | C1 |
 |:--- |:--- |:--- |:--- |
-| `IsTopologicalGroup.toContinuousInv` | `G`, `inst₁`, `inst₂`, `self` | `G` | ✓ |
-| `Semiring.toNatAlgebra` | `R`, `inst` | `ℕ`, `R` | ✓ |
-| `ULift.addLeftCancelMonoid` | `α`, `inst` | `ULift α` | ✓ |
-| `Lex.instIsRightCancelAdd` | `α`, `inst₁`, `inst₂` | `Lex α` | ✗ |
+| `IsTopologicalGroup.toContinuousInv` | `G`, `inst₁`, `inst₂` | `G` | ✓ |
+| `Semiring.toNatAlgebra` | `R` | `ℕ`, `R` | ✓ |
+| `ULift.addLeftCancelMonoid` | `α` | `ULift α` | ✓ |
+| `Lex.instIsRightCancelAdd` | `α`, `inst₁` | `Lex α` | ✗ |
 | `Matrix.isScalarTower` | `R`, `S`, `α`, `inst₁`, `inst₃`, `inst₂` | `R`, `S`, `Matrix m n α` | ✗ |
-| `IsNoetherianRing.wfDvdMonoid` | `R`, `inst₁` | `R` | ✓ |
+| `IsNoetherianRing.wfDvdMonoid` | `R`, `@CommSemiring.toSemiring R inst₁` | `R` | ✓ |
 
 | Instance | Class-typed args…¹ | Source's type | C2 |
 |:--- |:--- |:--- |:--- |
 | `IsTopologicalGroup.toContinuousInv` | `inst₁`, `inst₂` | `@IsTopologicalGroup G inst₁ inst₂` | ✓ |
 | `Semiring.toNatAlgebra` | _(none)_ | `@Semiring R` | ✓ |
-| `ULift.addLeftCancelMonoid` | _(none)_ | `@ULift α` | ✓ |
+| `ULift.addLeftCancelMonoid` | _(none)_ | `@AddLeftCancelMonoid α` | ✓ |
 | `Lex.instIsRightCancelAdd` | `inst₁` | `@IsRightCancelAdd α inst₁` | ✓ |
 | `Matrix.isScalarTower` | `inst₁`, `inst₂`, `inst₃` | `@IsScalarTower R S α inst₁ inst₃ inst₂` | ✓ |
 | `IsNoetherianRing.wfDvdMonoid` | `inst₁`, `inst₂` | `@IsNoetherianRing R (CommSemiring.toSemiring R inst₁)` | ✗ |
@@ -337,7 +337,7 @@ public structure ClassGraph where
   /-- Array of edges. This is what defines the class graph. -/
   edges : Array ClassEdge
   /--
-  `true` iff the vertex's class's codomain is `Prop` or if all applications of the vertex's class
+  `true` if the vertex's class's codomain is `Prop` or if all applications of the vertex's class
   are subsingletons.
   -/
   isSubsingleton : Vertex → Bool
@@ -346,7 +346,9 @@ public structure ClassGraph where
 
 
 /--
-For a class with name `name`, return `true` iff any application of this class is a subsingleton.
+For a class with name `name`:
+* If `synthesize := true`, return `true` iff any application of this class is a subsingleton.
+* If `synthesize := false`, return `true` iff this class is `Prop`-valued.
 
 ---
 **Background**
@@ -389,7 +391,7 @@ future work.
 -/
 def isSubsingletonClass (name : Name) (synthesize : Bool := true) : MetaM Bool := do
   let r ← withGenericKey name fun app body => do
-    -- `withGenericKey` already whnf-reduced `body` for us.
+    -- Note: `withGenericKey` already whnf-reduced `body` for us.
     if body.isProp then return some true
     unless synthesize do return some false
     let goal := mkApp (.const ``Subsingleton [← mkFreshLevelMVar]) app
@@ -401,8 +403,8 @@ def isSubsingletonClass (name : Name) (synthesize : Bool := true) : MetaM Bool :
 
 
 /--
-Scans every name in `names` (which is expected to be a list of class and instance declarations),
-collecting weakening edges and taking note of subsingleton classes as it goes.
+Scans every name in `names` (which is expected to be a list of instance declarations), collecting
+weakening edges and taking note of classes that _may_ be subsingletons as it goes.
 
 ---
 **Implementation notes**

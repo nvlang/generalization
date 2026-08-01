@@ -77,17 +77,16 @@ distinguish two sub-categories:
 * **Conditional tributary junctions (CTJ):** When we add one or more `Prop` mixins to what would
   otherwise have been an unconditional tributary junction, we get a conditional tributary junction.
   Here, we have that, under the assumption that the mixins are satisfied, this junction is also
-  essentially a projection in spirit. Nonetheless, CTJ's are out of scope for now. Examples of CTJ's
-  include `LeftCancelMonoid.groupOfFinite`
+  essentially a projection in spirit. Nonetheless, CTJ's are out of scope for now.
 
   * CTJs would need tie-breakers. For example:
 
     ```
     IsNoetherianRing.wfDvdMonoid.{u} : forall {R : Type.{u}}
-      [inst₁ : CommSemiring.{u} R]
-      [inst₂ : IsDomain.{u} R (CommSemiring.toSemiring.{u} R inst₁)]
-      [h : IsNoetherianRing.{u} R (CommSemiring.toSemiring.{u} R inst₁)],
-      WfDvdMonoid.{u} R (CommSemiring.toCommMonoidWithZero.{u} R inst₁)
+      [inst₁ : @CommSemiring.{u} R]
+      [inst₂ : @IsDomain.{u} R (@CommSemiring.toSemiring.{u} R inst₁)]
+      [h : @IsNoetherianRing.{u} R (@CommSemiring.toSemiring.{u} R inst₁)],
+      @WfDvdMonoid.{u} R (@CommSemiring.toCommMonoidWithZero.{u} R inst₁)
     ```
 
     here, if we removed either the `IsDomain R` or `IsNoetherianRing R` mixins, we'd have a UTJ (as
@@ -101,9 +100,9 @@ distinguish two sub-categories:
 
     ```
     LeftCancelMonoid.groupOfFinite.{u} : forall {G : Type.{u}}
-      [inst₁ : LeftCancelMonoid.{u} G]
-      [inst₂ : Finite.{succ u} G],
-      Group.{u} G
+      [inst₁ : @LeftCancelMonoid.{u} G]
+      [inst₂ : @Finite.{succ u} G],
+      @Group.{u} G
     ```
 
     Here, if we adopted the namespace tie-breaker we suggested before, `inst₁` would be chosen as
@@ -263,7 +262,7 @@ public structure TargetedBinder extends Key where
 deriving Inhabited
 
 
-/-- Get `Name` of class head of a `TargetedBinder`'s type. -/
+/-- Get the `Name` of the class head of a `TargetedBinder`'s type (δ-reducing `abbrev`s). -/
 public def TargetedBinder.origName (b : TargetedBinder) : Name := b.toVertex.name
 
 
@@ -322,7 +321,7 @@ Then the corresponding `Requirement` record for this chain would be:
 
 ```
 {
-  binder := { … }, -- b.fvar
+  binder := { … }, -- b
   name := `Monoid,
   pattern := #[.bvar 0],
   levels := .polymorphic, -- or `.concrete #[…]`
@@ -331,7 +330,7 @@ Then the corresponding `Requirement` record for this chain would be:
 ```
 
 Intuitively, this `Requirement` record is expressing that the instance-implicit binder `b` must be
-able to provide an instance of `Mul α`.
+able to provide an instance of `Monoid α`.
 -/
 public structure Requirement extends Key where
   binder : TargetedBinder
@@ -339,7 +338,9 @@ deriving Inhabited
 
 
 /--
-Returns `true` if the local declaration is an instance-implicit class binder, and `false` otherwise.
+Depending on the value of `generalizeTypeclasses.targetImplicit`:
+* `true` (default): Returns `true` iff the local declaration is not an explicit binder.
+* `false`: Returns `true` iff the local declaration is an instance-implicit binder.
 
 ---
 **Implementation notes**
@@ -399,6 +400,9 @@ initialize declSourceCacheRef : IO.Ref (HashMap Name (Option Nat)) ← IO.mkRef 
 /--
 Get index of source slot for a given declaration. Doing this once for each declaration and memoizing
 the result makes descent through instance chains a lot faster.
+
+**Note:** If any of the conclusion's universe parameters are absent from the source slot's type,
+`none` is returned.
 -/
 public def declSource? (fn : Name) : MetaM (Option Nat) := do
   if let some memo := (← declSourceCacheRef.get)[fn]? then return memo
@@ -428,14 +432,17 @@ public def declSource? (fn : Name) : MetaM (Option Nat) := do
 
 
 /--
-Given the instance arguments `inst₁ … instₙ` of an application, check if there's a _unique_ `i` such
-that `instᵢ`'s type contains `instⱼ` for all `j ∈ {1, …, n}`. If there is, return `some instᵢ`.
-Otherwise, return `none`.
+Given an application `f arg₁ … argₙ`, check if there's a _unique_ `i` such that `argᵢ`'s type
+contains `argⱼ` for all `j ∈ {1, …, n}`. If there is, return `some argᵢ`. Otherwise, return `none`.
 
 This is used to handle junctions of instance chains effectively. For example, if we have
 `@DistribMulAction.toDistribSMul M A inst_Monoid_M inst_AddMonoid_A inst_DistribMulAction_M_A`, then
 the source is `inst_DistribMulAction_M_A`, as its type `@DistribMulAction M A inst_Monoid_M
 inst_AddMonoid_A` contains all the other arguments.
+
+**Note:** If `f` is a constant whose declaration's conclusion's universe parameters are absent from
+the type of the `argᵢ` that the procedure described above would return, `sourceArg?` returns `none`
+instead. #TODO: Example.
 -/
 def sourceArg? (e : Expr) : MetaM (Option Expr) := do
   let e := e.consumeMData
@@ -505,8 +512,8 @@ shouldn't. If it shouldn't, that means `collect` will drop the chain and start a
 **Implementation notes**
 
 `propagatedHead?` returns `none` iff
-1.  the transformation `linkT` contains arguments that are not "statable" using the source's
-    arguments, or
+1.  the transformation `linkT`'s type contains frame arguments that are not "statable" using the
+    source's arguments, or
 2.  the `head` has more open arguments than the source and has an `outParam` or `semiOutParam`.
 
 Condition 1 is inherited from condition 1 of `isWeakeningEdge`.
@@ -522,7 +529,7 @@ Examples where `propagatedHead?` returns `some head`:
 
 * `CommMonoid M ↝ Monoid M`
 * `Mul R ↝ SMul R R`
-* `IsSimpleModule R M ↝ Nontrivial (Sub' R M)`
+* `IsSimpleModule R M ↝ Nontrivial (Submodule R M)`
 * `Algebra R A ↝ IsScalarTower R A A`
 * `MonoidHomClass F M N ↝ MulHomClass F M N`
 
@@ -575,9 +582,9 @@ mutual
 
 /--
 Decide what to do with `e`:
-* If `e` is a class application `C a₁ … aₙ`, then call `collect` on `e`, starting a new chain with
-  `C` (converted to a `Key`) as `head`.
-* If `e` is not a class application, call `walk` on `e`.
+* If `e`'s type is a class application `C a₁ … aₙ`, then call `collect` on `e`, starting a new chain
+  with `C` (converted to a `Key`) as `head`.
+* If `e`'s type is not a class application, call `walk` on `e`.
 -/
 partial def route (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do

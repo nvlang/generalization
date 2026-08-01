@@ -109,8 +109,8 @@ the fully elaborated declaration.
 
 ## Main definitions
 
-* `linter`: This is the structure that gets registered via `initialize addLinter linter`, and whose
-  `linter.run` function runs for every top-level command.
+* `generalizeTypeclasses`: This is the structure that gets registered via `initialize addLinter
+  generalizeTypeclasses`, and whose `linter.run` function runs for every top-level command.
 * `lintTypeclassesFor`: The function that computes, verifies, and emits the typeclass weakening
   suggestions.
 -/
@@ -132,9 +132,9 @@ def hasTargetedClassBinder (type : Expr) : MetaM Bool := do
 
 /--
 Given a weakening candidate `candidate` for a declaration with constant info `const`, returns a pair
-of strings, the first string indicating what the existing binder looks like (e.g., `[Group G]`), and
-the second string indicating the class application to which said binder may be weakened (e.g.,
-`Monoid G`).
+of strings, the first string indicating what the existing binder looks like (e.g., `"[Group G]"`),
+and the second string indicating the how said binder may be weakened (e.g., ``"removed (dropped)"``,
+``"weakened to `Monoid G`"``, ``"split into `Mul G`, `One G`"``).
 -/
 def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
   targetedBinderTelescope const.type fun lds _ => do
@@ -164,7 +164,10 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
     return (disp, target)
 
 
-/-- Run `x` with options `opts` added to the context, and catch runtime exceptions. -/
+/--
+Run `x` with options `opts` replacing the ambient options, `maxHeartbeats` set to `heartbeats`, and
+catching runtime exceptions.
+-/
 def withEffectiveContext (opts : Options) (heartbeats : Nat) (x : TermElabM Unit) :
     TermElabM Unit :=
   withOptions (fun _ => opts) <|
@@ -262,10 +265,10 @@ def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : Consta
 
 
 /--
-This is the structure that gets registered via `initialize addLinter linter`, and whose `linter.run`
-function runs for every top-level command.
+This is the structure that gets registered via `initialize addLinter generalizeTypeclasses`, and
+whose `generalizeTypeclasses.run` function runs for every top-level command.
 
-For each command that `linter.run` is called on, it figures out whether it should run
+For each command that `generalizeTypeclasses.run` is called on, it figures out whether it should run
 `lintTypeclassesFor` and, if so, sets up the `DeclSource` record that they'll need and builds (or
 fetches from cache) the typeclass graph.
 -/

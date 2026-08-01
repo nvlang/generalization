@@ -161,8 +161,8 @@ public register_option generalizeTypeclasses.conclusionGuard : Bool := {
 -- experiments.
 public register_option generalizeTypeclasses.redundancyGuard : Bool := {
   defValue := true,
-  descr := "[Warning: disabling this option is experimental]. Whether weakenings that are detected
-    to be vacuous should be blocked. Not all vacuity is detected."
+  descr := "[Warning: disabling this option is experimental]. Whether a specific type of vacuous
+    weakenings should become \"drop\" suggestions instead. Not all vacuity is detected."
 }
 
 public register_option generalizationLinter.stats : Bool := {

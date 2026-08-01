@@ -16,11 +16,11 @@ open Std (HashSet HashMap)
 
 /-- The kinds of possible weakening suggestions. -/
 public inductive WeakeningShape where
-  /-- Binder is entirely unused, and can therefore be dropped (removed). -/
+  /-- Binder is entirely unused as far as the linter can tell, and may therefore be droppable. -/
   | drop
-  /-- Binder can be weakened to `weakerVertex`. -/
+  /-- Binder may be weakenable to `weakerVertex`. -/
   | weaken (weakerVertex : Vertex)
-  /-- Binder can be weakened by splitting it up into `weakerVertices`. -/
+  /-- Binder may be weakenable by splitting it up into `weakerVertices`. -/
   | split (weakerVertices : Array Vertex)
 deriving Inhabited
 
@@ -65,6 +65,10 @@ If `ctx.includeSubsumers = false`:
 * Returns `true` iff `u` reaches `v` in `ctx.graph`.
 * Note: if either of `u` or `v` (or both) are not in the class graph, then this function will
   inevitably return `false` (even if `u = v`).
+
+**Note:** In all of these cases, "`u` reaches `v`" is to be understood as "`u` (or, if `u`'s
+universe levels are concrete, its universe-polymorphic variant) reaches `v` (or, if `v`'s universe
+levels are concrete, its universe-polymorphic variant)".
 
 ---
 **Implementation notes**
@@ -165,7 +169,7 @@ doesn't keep track of the relations between the bound variables of one vertex an
 given instance mapping.
 
 _See also:_ Alex J. Best. 2023. Automatically Generalizing Theorems Using Typeclasses. In Fifth
-Workshop on Formal Mathematics for Mathematicians, April 19, 2023. CEUR Workshop Proceedings.
+Workshop on Formal Mathematics for Mathematicians. CEUR Workshop Proceedings.
 Retrieved from [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-3377/fmm12.pdf).
 
 
@@ -213,7 +217,7 @@ def sccDemotedHeads : List Name := [`NSMul, `ZSMul, `NPow, `ZPow, `OfNat, `Trans
 /--
 The deterministic "algorithm" by which we pick representatives when `sccDemotedHeads` doesn't
 already force our decision. We also use this to choose a minimal common ancestor when
-`MCAContext.mca` would otherwise return multiple.
+`minCommonAncestors` would otherwise return multiple.
 -/
 def pick (vertices : Array Vertex) : Option Vertex :=
   vertices.foldl (init := none) fun best v => match best with
@@ -229,7 +233,10 @@ def sccRepresentative (scc : Array Vertex) : Option Vertex :=
 
 
 /--
-Returns a minimal common ancestor (MCA) of `reqVerts` in `ctx.graph.condensation`.
+Returns a minimal common ancestor (MCA) of `reqVerts` in `ctx.graph.condensation` which `b` can
+reach. If none exists, returns `none`. If more than one such MCA exists, uses `pick` to tie-break
+incomparable MCAs, and `sccRepresentative` to tie-break the comparable ones (which will inevitably
+be equipotent).
 
 ---
 **Implementation notes**
@@ -260,13 +267,14 @@ ancestor that satisfies a subsumer of `reqVert` would also satisfy `reqVert`.
 **Example:** If `reqVert` is `Membership #0 (Submodule #1 #0)` (a real requirement of
 `Submodule.span_range_subtype_eq_top_iff`), then just querying the class graph for `reqVert` would
 return nothing; `reqVert` is simply not _in_ the class graph. Meanwhile, if we first expanded
-`reqVert` to `reqVert.witnesses = #[reqVert, Membership #0 #1]`, we'd find that `Membership #0 #1`
-_is_ a vertex of the class graph and hence something that `minCommonAncestors` can use. Finally, an
-ancestor which satisfies `Membership #0 #1` is also guaranteed to satisfy `Membership #0 (Submodule
-#1 #0)` (note that the `#0` etc. are bvars, meaning that the `#0` in `Membership #0 #1` does _not_
-have to refer to the same thing as the `#0` in `Membership #0 (Submodule #1 #0)`). In this specific
-case, this corresponds to the intuition that, if something can define `∈` between _any_ two things,
-it can surely define it between `α` and `Submodule β α` for any `α β : Type*`.
+`reqVert` to `reqVert.witnesses = #[reqVert, Membership #0 #1, Membership #0 (Submodule #1 #2)]`,
+we'd find that `Membership #0 #1` _is_ a vertex of the class graph and hence something that
+`minCommonAncestors` can use. Finally, an ancestor which satisfies `Membership #0 #1` is also
+guaranteed to satisfy `Membership #0 (Submodule #1 #0)` (note that the `#0` etc. are bvars, meaning
+that the `#0` in `Membership #0 #1` does _not_ have to refer to the same thing as the `#0` in
+`Membership #0 (Submodule #1 #0)`). In this specific case, this corresponds to the intuition that,
+if something can define `∈` between _any_ two things, it can surely define it between `α` and
+`Submodule β α` for any `α β : Type*`.
 
 **Note:** `reqVert.witnesses` also helps out with universe polymorphism; if `reqVert` is pinned to
 some specific universes, it's rather unlikely that it'll be a vertex in the class graph, but
@@ -282,8 +290,9 @@ def MCAContext.minCommonAncestor (ctx : MCAContext) (b : TargetedBinder) (reqVer
   -- as an AND of ORs to satisfy.
   let witnessSets := reqVerts.map
     fun reqVert => HashSet.ofArray (reqVert.witnesses ctx.includeSubsumers)
-  -- Make sure that
+  -- Only MCAs that `b` can reach are of interest to us, otherwise they're not weakenings of `b`.
   let mcas := (ctx.graph.condensation.minCommonAncestors witnessSets ctx.absencePolicy).filter
+    -- Note: Since we're checking reachability, `scc[0]?.any` is equivalent to `scc.any` here.
     fun scc => scc[0]?.any (ctx.reachesV b.toVertex ·)
   match mcas with
   | #[] => none
@@ -306,9 +315,12 @@ def MCAContext.strictlyWeaker (ctx : MCAContext) (b : TargetedBinder) (v : Verte
 
 /--
 Partition `reqVerts` into non-data-descendant-sharing blocks and return the MCAs of the blocks as an
-array, or `none` if `reqVerts` can't be split up, or if any of the blocks don't have a MCA, or if
-any of the blocks' MCAs are not strictly weaker than `b` (in which case we'd be e.g. replacing
-`[Group G]` with `[Group G] […]`, which would be pointless).
+array, or `none` if
+* `reqVerts` can't be split up, or
+* if any of the blocks don't have a MCA, or
+* if any of the blocks' MCAs are not strictly weaker than `b` (in which case we'd be e.g. replacing
+  `[Group G]` with `[Group G] […]`, which would be pointless), or
+* if the MCAs share any data-carrying descendant.
 
 **Note:** This function only ever gets called when `splitPolicy` is `"allow"` or `"prefer"`.
 -/
@@ -327,13 +339,14 @@ def MCAContext.mcasPartition (ctx : MCAContext) (b : TargetedBinder) (reqVerts :
     -- `Prop`-valued), we get three distinct blocks, and hence will call `minCommonAncestor` three
     -- times. Now, within `minCommonAncestor`, each member of each block is expanded into a witness
     -- set:
-    -- * `ctx.minCommonAncestor {Nontrivial #0} = ctx.graph.condensation.minCommonAncestors
+    --
+    -- * `ctx.minCommonAncestor {Nontrivial #0} ≈ ctx.graph.condensation.minCommonAncestors
     --   #[{Nontrivial #0}] = #[#[Nontrivial #0]]`,
-    -- * `ctx.minCommonAncestor {NoZeroDivisors #0} = ctx.graph.condensation.minCommonAncestors
+    -- * `ctx.minCommonAncestor {NoZeroDivisors #0} ≈ ctx.graph.condensation.minCommonAncestors
     --   #[{NoZeroDivisors #0}] = #[#[NoZeroDivisors #0]]`,
-    -- * `ctx.minCommonAncestor {NoZeroDivisors #0} = ctx.graph.condensation.minCommonAncestors
-    --   #[{NoZeroDivisors (Polynomial #0), NoZeroDivisors #0}] = #[#[NoZeroDivisors #0]]`
-    --   (`NoZeroDivisors (Polynomial #0)` is not a graph vertex).
+    -- * `ctx.minCommonAncestor {NoZeroDivisors (Polynomial #0)} ≈
+    --   ctx.graph.condensation.minCommonAncestors #[{NoZeroDivisors (Polynomial #0), NoZeroDivisors
+    --   #0}] = #[#[NoZeroDivisors #0]]` (`NoZeroDivisors (Polynomial #0)` is not a graph vertex).
     --
     -- Supposing that the above is the order in which the `for block in blocks` loop above processed
     -- these, its third iteration would, at this exact point, have `mcas = #[Nontrivial #0,
@@ -364,16 +377,18 @@ def MCAContext.mcasPartition (ctx : MCAContext) (b : TargetedBinder) (reqVerts :
 
 
 /--
-Returns `true` if `v.pattern ⊆ b.pattern` (assuming that `v` was computed via `ctx.replacement? b`).
+Returns `true` iff `v.pattern` is made up of bvars, bvar-free expressions, and expressions that are
+also entries of `b.pattern`.
 -/
 def MCAContext.preservesKeyArgsOf (_ctx : MCAContext) (b : TargetedBinder) (v : Vertex) : Bool :=
-  v.pattern.all fun arg => arg.isBVar || !arg.hasLooseBVars || b.toVertex.pattern.contains arg
+  v.pattern.all fun arg => arg.isBVar || !arg.hasLooseBVars || b.pattern.contains arg
 
 
 /--
 What might we replace `b` with, given that `b` requires (or, more accurately, uses) `reqVerts`?
 
 This returns
+* `some #[]` to indicate that `b` could be dropped altogether,
 * `some #[mca]` to indicate that `b` could be replaced by `mca`,
 * `some #[mca₁, …, mcaₙ]` to indicate that `b` could be split up into `mca₁`, …, `mcaₙ`, or
 * `none` to indicate that `b` can't be weakened within `ctx.graph` under the constraints defined by

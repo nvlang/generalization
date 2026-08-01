@@ -28,8 +28,8 @@ which is the process we refer to as ***canonicalization***, and back, which we r
 * `canonArg` canonicalizes a single argument. For example, for `Module R M`, this means `R` and `M`
   become `bvar 0` and `bvar 1`. For `Pow α ℕ`, this means `α` becomes `bvar 0` and `ℕ` remains `ℕ`.
 * `toKey` canonicalizes a class application into a `Key` that we query the class graph with.
-* `reify` takes a class name and some frame arguments, and reifies them into a proper class
-  application.
+* `reifyKey` takes a class name and a `pattern` and corresponding `subst`, and reifies them into a
+  proper class application.
 -/
 
 open Lean Meta GeneralizationLinter
@@ -173,6 +173,12 @@ def frameSlots? (name : Name) : MetaM (Option (Array Bool)) := do
   forallTelescope info.type fun params _ =>
     some <$> params.mapM fun p => return !(← p.fvarId!.getDecl).binderInfo.isInstImplicit
 
+/--
+Given `mask = #[b₁, …, bₙ]` and `vals = #[e₁, …, eₘ]`:
+* If `mask.filter (· == true) ≠ m`, returns `none`.
+* Otherwise, returns `#[s₁, …, sₙ]`, where `sᵢ = some eᵢ` if `bᵢ == true`, and `sᵢ = none` if `bᵢ ==
+  false`.
+-/
 def placeAtSlots (mask : Array Bool) (vals : Array Expr) : Option (Array (Option Expr)) := Id.run do
   let mut slots : Array (Option Expr) := #[]
   let mut i : Nat := 0
@@ -269,7 +275,7 @@ public partial def canonArg (e : Expr) : CanonVarsM Expr := do
     else
       -- `e` contains "variables", is not merely an fvar, and is either not function app or "f" is
       -- not a type constructor. In this case, we abstract `e` to a fresh bvar, and record `e` so
-      -- that `reify` can recover it later on.
+      -- that `reifyKey` can recover it later on.
       let (m, carriers) ← get
       let k := carriers.size
       set (m, carriers.push e)
@@ -291,7 +297,7 @@ Canonicalized universe arguments for a head with universe arguments `lvls`.
 ```
 universeLevelsOf [0, 1] = concrete #[0, 1]
 universeLevelsOf [u]    = polymorphic      -- `u` is a universe variable
-universeLevelsOf []     = concrete #[]     -- monomorphic class, e.g., `Std.Refl`
+universeLevelsOf []     = concrete #[]     -- monomorphic class, e.g., `Fact`
 ```
 -/
 public def universeLevelsOf (lvls : List Level) : UniverseLevels :=
@@ -342,18 +348,6 @@ toKey ‹@Small (@Subtype α p)› = {
   forallArity := 0,
 }
 
--- class IsWellFounded (α : Type*) (r : α → α → Prop)
--- structure Submodule (R M : Type*) [Semiring R] [AddCommMonoid M] [Module R M]
-toKey ‹@IsWellFounded (@Submodule α α inst₁ inst₂ inst₃) β› = {
-  -- `Vertex` fields
-  name := `IsWellFounded,
-  levels := .polymorphic
-  pattern := #[Submodule (.bvar 0) (.bvar 0), .bvar 1],
-  -- `Key` fields
-  subst := #[α, β]
-  forallArity := 0,
-}
-
 -- Let `f` be a free variable with `f : ι → Type*`.
 toKey ‹∀ i : ι, Monoid (f i)› = {
   -- `Vertex` fields
@@ -366,9 +360,8 @@ toKey ‹∀ i : ι, Monoid (f i)› = {
 }
 ```
 
-Note how the class applications `Small (Subtype p)` and `IsWellFounded (Submodule α α) β` get
-indexed in the class graph in accordance with what `keySlots` returns for the type formers `Subtype`
-and `Submodule`, which are themselves not classes.
+Note how the class application `Small (Subtype p)` gets indexed in the class graph in accordance
+with what `keySlots` returns for the type former `Subtype`, which is not itself a class.
 -/
 public def toKey (e: Expr) : MetaM Key := do
   let e0 := e.consumeMData
@@ -413,9 +406,10 @@ Returns `none` if `name` isn't in the environment.
 
 The fresh universe level metavariables is what enables us to reify a universe-polymorphic class
 without having to pin its levels prematurely. Note that class graph vertices don't store universe
-levels, so we have to add levels to `name` in some way anyhow, and we're just choosing not to give
-it arbitrarily pinned levels, but rather giving it fresh level metavariables and letting downstream
-unification pin them if and where necessary.
+levels per se (`Vertex.levels` does not contain levels per se), so we have to add levels to `name`
+in some way anyhow, and we're just choosing not to give it arbitrarily pinned levels, but rather
+giving it fresh level metavariables and letting downstream unification pin them if and where
+necessary.
 -/
 def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
   let some const := (← getEnv).find? name | return none
@@ -440,17 +434,18 @@ theorem thm.{w} {S : Type 0} {A : Type w} [CommSemiring S] [Semiring A] [Algebra
 
 To know what exactly it'd be suggesting (e.g., so that it can verify said suggestion candidate), the
 linter needs to construct `Module S A` somehow — the weakened binder's type. To do this, it calls
-`ReSynth.replBinderType` with `Algebra S A` as an `Expr` and the `Name` `` `Module ``. This in turn
-then computes the frame `#[S, A]` of `Algebra S A` using `frameArgs`, and then calls ``reifyClass
-`Module #[S, A]``, which will output the `Expr` corresponding to `Module S A` (wrapped as an
-`Option`; if `` `Module `` were not a constant defined in the environment, or if something else went
-wrong, then `reifyClass` would return `none`).
+`replaceBinderType` with `Algebra S A` as an `Expr` and the replacement `Vertex` for `Module S A`.
+This in turn then computes the key of `Algebra S A` (which has `subst = #[S, A]`), and then calls
+``reifyKey `Module #[bvar 0, bvar 1] #[S, A]``, which then calls ``mkClassApp `Module #[S, A]
+(useKeySlots := true)``, which will in turn output the `Expr` corresponding to `Module S A` (wrapped
+as an `Option`; if `` `Module `` were not a constant defined in the environment, or if something
+else went wrong, then `mkClassApp` would return `none`).
 
-Note that, in constructing its output, `reifyClass` may perform instance synthesis: in the ``
+Note that, in constructing its output, `mkClassApp` may perform instance synthesis: in the ``
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
-(instance metavariables spawned by `reifyClass`) via instance synthesis.
+(instance metavariables spawned by `mkClassApp`) via instance synthesis.
 -/
-public def reifyClass (name : Name) (vals : Array Expr) (useKeySlots : Bool := false) :
+public def mkClassApp (name : Name) (vals : Array Expr) (useKeySlots : Bool := false) :
     MetaM (Option Expr) := do
   let some mask ← (if useKeySlots then some <$> keySlots name else frameSlots? name) | return none
   let some slots := placeAtSlots mask vals | return none
@@ -471,43 +466,94 @@ public def reifyClass (name : Name) (vals : Array Expr) (useKeySlots : Bool := f
 
 
 /--
-Elaborate a pattern entry `e`.
+Essentially the inverse of `canonArg`.
 
-Pattern entries can be applications, in which case `subst` won't tell us what the
-pattern entry is, but rather what its key arguments are.
+Here, `e` is a `pattern` entry of a class graph vertex `v : Vertex` and `reifyArg e subst` is tasked
+with reifying this `e` using the `subst` field of some key `k : Key` for which `k.toVertex = v`. In
+the vast majority of cases, `e` is just a plain bvar and `reifyArg` just returns the corresponding
+`subst` entry. However, if `e` is a constant-headed, non-nullary application, it'll return `e`
+_re-elaborated_ (i.e., with the non-key args which `canonArg` dropped inferred back, and fresh
+universe levels applied and determined, since `canonArg` erases universe levels too) with any bvars
+in any of its arguments replaced using `subst`.
+
+---
+**Examples**
+
+```
+reifyArg ‹#0› #[α] = some ‹α›
+reifyArg ‹#0› #[Fintype.card α] = some ‹Fintype.card α›
+reifyArg ‹Int› #[] = some ‹Int›
+reifyArg ‹42› #[] = some ‹42›
+reifyArg ‹Units #0› #[α] = some ‹Units α›
+reifyArg ‹Subtype #0› #[p] = some ‹@Subtype p inst›
+```
 -/
-public partial def elabPatternEntry (e : Expr) : MetaM (Option Expr) := do
-  let args := e.getAppArgs
-  let some h := e.getAppFn.constName? | return some e
-  if args.isEmpty then return some e
-  let keep ← keySlots h
-  if keep.isEmpty then return some e
-  let mut vals : Array Expr := #[]
-  for arg in args do
-    let some arg' ← elabPatternEntry arg | return none
-    vals := vals.push arg'
-  let some slots := placeAtSlots keep vals | return none
-  try some <$> mkAppOptM h slots catch _ => return none
+public partial def reifyArg (e : Expr) (subst : Array Expr) : MetaM (Option Expr) := do
+  match e with
+  -- If `e` is a bvar, `subst` tells us exactly what it should be "elaborated" into (`subst`'s
+  -- entries are already fully elaborated, after all, since they're just subexpressions of the
+  -- elaborated expression that gave rise to the key which contains `subst`).
+  | .bvar i => return subst[i]?
+  | _ =>
+    -- If `e` is not a constant-headed application (e.g., `e = .sort 0` or `e = .lit (.natVal 42)`),
+    -- we return `some e`, because `canonArg` would've left `e` untouched anyway. This happens very
+    -- rarely though (<1% of cases).
+    let some h := e.getAppFn.constName? | return some e
+    let args := e.getAppArgs
+    -- At this point, `e` is `h arg₁ … argₙ`, `h` is a constant, `args = #[arg₁, …, argₙ]`. If `h`
+    -- is nullary, we return `e` as is. Example: `e = ℝ = .const Real []` (so that ``h = `Real``).
+    if args.isEmpty then return some e
+    let keep ← keySlots h
+    -- Should be unreachable, since `keySlots h` returns `#[]` only if `h` is nullary (or if `h` is
+    -- not in the environment), which the `args.isEmpty` check (and the `| return some e` fallback
+    -- in `let some h := e.getAppFn.constName? | return some e`) already ruled out.
+    if keep.isEmpty then return some e
+    let mut vals : Array Expr := #[]
+    for arg in args do
+      -- `return none` branch taken via one of the two `return none`s further below.
+      let some arg' ← reifyArg arg subst | return none
+      vals := vals.push arg'
+    -- `return none` branch taken very rarely (<1% of cases), corresponding to cases where
+    -- `canonArg` canonicalized a type former that was only _partially_ applied, so that `vals.size
+    -- < keep.size`. Example: #TODO
+    let some slots := placeAtSlots keep vals | return none
+    -- Let `mkAppOptM` do the heavy lifting. `return none` branch taken very rarely (<1% of cases),
+    -- corresponding to cases of type former applications where the former's universe params aren't
+    -- fully determined by the args in `slots`, leading to `mkAppOpt` returning `none`. Example: #TODO
+    try some <$> mkAppOptM h slots catch _ => return none
 
 
 /--
-The inverse of `toKey` for non-parametric class binders. Reifies the class `name` by instantiating
-the `pattern` of its key with the concrete values provided by `subst`, each elaborated against the
-corresponding slot's expected type, and then inferring the non-key-slots of `name`. Returns `none`
-if `pattern` needs more values than `subst` provides, or if elaboration or inference failed at any
-point.
+Essentially the inverse of `toKey` for non-parametric class binders. Reifies the class `name` by
+instantiating the `pattern` of its key with the concrete values provided by `subst`, each elaborated
+against the corresponding slot's expected type, and then inferring the non-key-slots of `name`.
+Returns `none` if `pattern` needs more values than `subst` provides, or if elaboration or inference
+failed at any point.
+
+---
+**Examples**
+
+```
+TODO
+```
 -/
-public def reify (name : Name) (pattern subst : Array Expr) : MetaM (Option Expr) := do
+public def reifyKey (name : Name) (pattern subst : Array Expr) : MetaM (Option Expr) := do
   if pattern.any (·.looseBVarRange > subst.size) then return none
   let mut entries : Array Expr := #[]
   for p in pattern do
-    let some e ← elabPatternEntry (p.instantiate subst) | return none
+    -- Pattern entries can be applications, in which case `subst` won't tell us what the pattern
+    -- entry is, but rather what its key arguments are. So we delegate figuring either case out to
+    -- `reifyArg`.
+    let some e ← reifyArg p subst | return none
     entries := entries.push e
-  reifyClass name entries (useKeySlots := true)
+  mkClassApp name entries (useKeySlots := true)
+
 
 /--
 Run the continuation `k` on the "generic" application `name.{…} a₁ … aₙ` of `n`-ary class `name` on
-fresh local hypotheses `a₁`, …, `aₙ`.
+fresh local hypotheses `a₁`, …, `aₙ` plus the WHNF-reduced body of `name`'s signature (which
+corresponds to the signature's conclusion only if said conclusion has no leading `∀`-expressions
+that `forallTelescopeReducing` would peel off).
 
 For motivation, see `isSubsingletonClass`.
 -/

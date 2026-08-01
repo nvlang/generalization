@@ -27,7 +27,7 @@ linter.
 **References**
 
 * Alex J. Best. 2023. Automatically Generalizing Theorems Using Typeclasses. In Fifth Workshop on
-  Formal Mathematics for Mathematicians, April 19, 2023. CEUR Workshop Proceedings. Retrieved from
+  Formal Mathematics for Mathematicians. CEUR Workshop Proceedings. Retrieved from
   [https://ceur-ws.org/Vol-3377/fmm12.pdf](https://ceur-ws.org/Vol-3377/fmm12.pdf).
 * David J. King and John Launchbury. 1995. Structuring depth-first search algorithms in Haskell. In
   Proceedings of the 22nd ACM SIGPLAN-SIGACT symposium on Principles of programming languages  -
@@ -127,13 +127,18 @@ public partial def dfs (G : Digraph V) (v : V) (acc : Array V) (vis : HashSet V)
     let (acc, vis) := (G.succs v).foldl (init := (acc, vis)) fun (acc, vis) w => G.dfs w acc vis
     (acc.push v, vis)
 
-/-- Returns the set of vertices of `G` reachable from `v`. -/
+
+/--
+Returns the set of vertices of `G` reachable from `v`, including `v`.
+If `v` is not a vertex of `G`, . #TODO
+-/
 public def downSet (G : Digraph V) (v : V) : HashSet V := (G.dfs v #[] {}).2
 
 
 /-- Returns map from vertices to the set of vertices that each can reach. -/
 public def downSets (G : Digraph V) : HashMap V (HashSet V) :=
   G.adj.fold (init := {}) fun sets v _ => sets.insert v (G.downSet v)
+
 
 public def postorder (G : Digraph V) : Array V :=
   (G.vertices.foldl (init := (#[], {})) fun (acc, vis) v => G.dfs v acc vis).1
@@ -207,13 +212,20 @@ public def indicesOf (c : Condensation V) (vs : HashSet V) : HashSet Nat :=
 /-! ### Least Upper Bounds -/
 
 /--
-Establishes how `minCommonAncestors` should handle inputs that are unexpectedly
-not vertices of the given condensation.
+Establishes how `minCommonAncestors` should handle witness sets where none of the witnesses
+corresponds to a vertex of the condensation.
 -/
 public inductive AbsencePolicy
-  /-- Return an empty array. (Default.) -/
+  /--
+  Witness sets where none of the witnesses corresponds to a vertex of the condensation become empty
+  arrays, leading to `minCommonAncestors` returning `#[]`. (Default.)
+  -/
   | failClosed
-  /-- Filter out bad inputs and proceed as usual. -/
+  /--
+  Witness sets where none of the witnesses corresponds to a vertex of the condensation are
+  discarded, leading to `minCommonAncestors` not taking them into account and hence returning
+  ancestors which will not have any of these witness sets' witnesses as a descendant.
+  -/
   | failOpenGuarded
 deriving BEq, Repr
 
@@ -270,7 +282,7 @@ given encodes the relationships between all of these classes:
   of the SCCs of the class graph (pre-condensation) are singletons.
 
   ```
-  minCommonAncestors #[{One #0}] = #[#[One #0, OfNat #0 1]]
+  minCommonAncestors #[{One #0}] = #[#[OfNat #0 1, One #0]]
   minCommonAncestors #[{Monoid #0}] = #[#[Monoid #0]]
   ```
 
@@ -278,9 +290,9 @@ given encodes the relationships between all of these classes:
   non-equipotent minimal common ancestors.
 
   ```
-  minCommonAncestors #[{Add}, {Mul}] = #[
-    #[Lean.Grind.Semiring],
-    #[Distrib],
+  minCommonAncestors #[{Add #0}, {Mul #0}] = #[
+    #[Lean.Grind.Semiring #0],
+    #[Distrib #0],
   ]
   ```
 -/

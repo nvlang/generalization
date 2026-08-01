@@ -50,7 +50,9 @@ public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool
 
 /--
 Convert weakenings for which `replacementsRedundant` flagged every replacement as redundant to
-drops.
+drops. Note that the returned array may be smaller than `candidates`. Furthermore, if `verify :=
+true`, weakenings that are converted to drops but then don't pass `weakeningHolds` are removed from
+the candidates array.
 -/
 def reshapeRedundantToDrops (declInfo : ConstantInfo) (verify : Bool) (candidates : Array Candidate) :
     MetaM (Array Candidate) :=
@@ -113,12 +115,19 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
 /-! ## Recompile -/
 
 public structure SourceIntact where
-  /-- Whether the declaration's binders _might_ have to be modified after applying the weakening. -/
+  /--
+  `true` if the declaration's binders wouldn't have to be modified after applying the weakening,
+  `false` if they _might_ would have to be modified.
+  -/
   binders : Bool
-  /-- Whether the declaration's conclusion has to be modified after applying the weakening. -/
+  /--
+  `true` if the declaration's conclusion would not have to be modified after applying the weakening,
+  `false` if it (almost certainly) would.
+  -/
   concl : Bool
   /--
-  Whether the declaration's body (i.e., value) has to be modified after applying the weakening.
+  `true` if the declaration's body (i.e., value) wouldn't have to be modified after applying the
+  weakening, `false` if it (almost certainly) would.
   -/
   body : Bool
 deriving Inhabited, BEq
@@ -128,12 +137,16 @@ public def SourceIntact.all (si : SourceIntact) : Bool := si.binders && si.concl
 
 /--
 Some weakenings may be genuine weakenings, but require modifications in the binders', conclusion's,
-or value's (i.e., proof term's) source code. We specify which, if any, of these parts need
-modification in the `parts` argument passed to the `.holds` "grade".
+or value's (i.e., proof term's) source code. We specify which parts don't need modifications and
+which parts do (or might) in the `parts` argument passed to the `.holds` "grade".
 
 If verification is turned off, the `.unverified` "grade" is assigned instead.
 -/
 public inductive WeakeningGrade where
+  /--
+  Example: `.holds { binders := true, concl := true, body := true }` indicates that applying the
+  weakening would require no additional modifications.
+  -/
   | holds (parts : SourceIntact)
   | unverified -- For experimental ablation measurements.
 deriving Inhabited, BEq
@@ -149,7 +162,7 @@ deriving Inhabited
 
 /--
 Given a weakened declaration `W` of the form `‹binders› : concl` (where `concl` is the same as the
-original declaration's), re-elaborate the declaration's value's source code (`bodyStx`, usually
+original declaration's), re-elaborate the declaration's value's source code (`src.body`, usually
 corresponding to a proof term) into `val` and type-check that we have `val : concl`. Return `some
 val` if successful, or `none` otherwise.
 -/
@@ -216,7 +229,7 @@ would in truth be dynamically-generated hygienic binder names, and `shortConcl` 
 Meanwhile, `conclStx = ‹∀ (c : α), a = b → b = c → a = c›`, so it can tell us that the "real"
 conclusion actually has 3 leading `∀`s (corresponding to `c`, `t₁`, and `t₂`).
 
-Now, let's pretend that `Group α` got weakened to `Monoid a`. Then `newConcl = ‹∀ (c : α), a = b → b
+Now, let's pretend that `Group α` got weakened to `Monoid α`. Then `newConcl = ‹∀ (c : α), a = b → b
 = c → a = c›` (note that we're using the `‹›` brackets are being used both for `Syntax` and
 `Expr`s). We now want to check that `newConcl` matches the old conclusion, but only have the
 `shortConcl` version of the old conclusion. Hence, we extract the last 3 arguments (we know it's 3
@@ -248,8 +261,9 @@ public def conclSourceHolds (W : Expr) (conclStx : Syntax) (levelNames : List Na
 
 /--
 Basically just `recompiledAgainst? ∘ weakenedStatementType`; if the given declaration's _value_
-post-weakenings re-elaborates and type-checks against the original conclusion, return said value,
-otherwise return `none`.
+post-weakenings re-elaborates and type-checks against the original conclusion, return said value
+through a 2-tuple `(W, value)`, where `value : W` is the value in question. Otherwise, return
+`none`.
 -/
 public def recompiledVal? (const : ConstantInfo) (src : DeclSource) (ws : Array (Nat × Array Vertex)) :
     TermElabM (Option (Expr × Expr)) := do
@@ -329,7 +343,7 @@ For reference:
 public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool :=
   binders.any fun b =>
     let args := b.getArgs
-    -- For many (most?) binders, `searched` is just `#[b[2]]` (see implementation note above).
+    -- For many (most?) binders, `searched` is just `#[b[2], b[3]]` (see implementation note above).
     let searched := if args.size ≥ 3 then args.extract 2 args.size else args
     -- See if we can find any identifier matching `name`.
     searched.any fun arg => (arg.find? fun s => (s.isIdent && !name.hasMacroScopes &&
@@ -340,7 +354,8 @@ public def binderSourceNamesBinder (binders : Array Syntax) (name : Name) : Bool
 If `budget < maxHeartbeats`, run `x` with `maxHeartbeats` lowered to `budget`. Otherwise, just run
 `x` with the existing `maxHeartbeats`.
 
-If a runtime exception occurs while running `x`, it is caught and `dflt` ("default") is returned.
+If a runtime (or other non-interrupt) exception occurs while running `x`, it is caught and `dflt`
+("default") is returned.
 
 If `budget` is `0`, runs `x` directly without any restrictions or exception handling.
 -/
@@ -362,7 +377,7 @@ deriving Inhabited
 
 
 /--
-Given a declaration with constant info `const` and value source code `bodyStx` (as well as a linter
+Given a declaration with constant info `const` and value source code `src.body` (as well as a linter
 config and class graph), return an array of verified, graded weakenings that could be applied to the
 declaration.
 -/

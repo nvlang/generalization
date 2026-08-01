@@ -53,7 +53,7 @@ public structure Vertex where
   | `Module R M` | `#[bvar 0, bvar 1]` | fvars become bvars |
   | `SomeClass α β γ β` | `#[bvar 0, bvar 1, bvar 2, bvar 1]` | repeated fvars reuse bvar index |
   | `Pow α ℕ` | `#[bvar 0, ℕ]` | bare constant is preserved |
-  | `IsTrans α (·=·)` | `#[bvar 0, bvar 1]` | opaque relation becomes bvar |
+  | `IsTrans α (·=·)` | `#[bvar 0]` | non-key α is dropped, opaque relation becomes bvar |
   | `OfNat α 1` | `#[bvar 0, 1]` | nat literal is preserved |
   | `Monoid (List α)` | `#[List (bvar 0)]` | structure inside carrier is preserved |
   | `Monoid (List (List (α × β)))` | `#[List (List ((bvar 0) × (bvar 1)))]` | structure inside carrier is preserved |
@@ -141,7 +141,7 @@ public structure Key extends Vertex where
   | `Module R M` | `#[bvar 0, bvar 1]` | `#[R, M]` |
   | `SomeClass α β γ β` | `#[bvar 0, bvar 1, bvar 2, bvar 1]` | `#[α, β, γ]` |
   | `Pow α ℕ` | `#[bvar 0, ℕ]` | `#[α]` |
-  | `IsTrans α (·=·)` | `#[bvar 0, bvar 1]` | `#[α, (·=·)]` |
+  | `IsTrans α (·=·)` | `#[bvar 0]` | `#[(·=·)]` |
   | `OfNat α 1` | `#[bvar 0, 1]` | `#[α]` |
   | `Monoid (List α)` | `#[List (bvar 0)]` | `#[α]` |
   | `Monoid (List (List (α × β)))` | `#[List (List ((bvar 0) × (bvar 1)))]` | `#[α, β]` |
@@ -343,8 +343,10 @@ where
 
 
 /--
-Given the arguments `#[a₁, …, aₙ]` of an application `f a₁ … aₙ`, returns an exhaustive list of all
-the arrays `#[p₁, …, pₙ]` for which we have that `f p₁ … pₙ` subsumes `f a₁ … aₙ`.
+Given the arguments `#[a₁, …, aₙ]` of an application `f a₁ … aₙ`, returns an exhaustive list (modulo
+reassignment of de Bruijn indices, i.e., e.g., we have `subsumers #[.bvar 2] = #[#[.bvar 0]]`
+instead of `#[#[.bvar 0], #[.bvar 1], #[.bvar 2], …]`) of all the arrays `#[p₁, …, pₙ]` for which we
+have that `f p₁ … pₙ` subsumes `f a₁ … aₙ`.
 
 ---
 **Example**
@@ -411,9 +413,13 @@ An upper bound for how many subsumers `args` may have:
 
 $$
   \prod_{\texttt{arg}\in\texttt{args}} \texttt{shapeCount}(\texttt{arg}) \cdot
-  \prod_{\texttt{mult}\in\texttt{colorMults}(args)} \texttt{bell}(\texttt{mult})
-  \geq |\texttt{subsumers}(\texttt{args})|.
+  \prod_{\texttt{mult}\in\texttt{colorMults}(args)} \texttt{bell}(\texttt{mult}) \geq
+  |\texttt{subsumers}(\texttt{args})|.
 $$
+
+**Note:** Our implementation of the $\texttt{bell}$ function returns `2³²` for inputs `>8`, so our
+computation of the bound is not mathematically faithful to the equation above when any of the `mult`
+is `>8`.
 -/
 def enumBudget (args : Array Expr) : Nat :=
   let shapes := args.foldl (init := 1) fun shapes' arg => shapes' * shapeCount arg
