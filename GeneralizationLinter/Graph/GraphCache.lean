@@ -28,7 +28,7 @@ initialize importedScanRef :
     IO.Ref (Option (UInt64 × Array ClassEdge × HashSet Name)) ← IO.mkRef none
 
 
-/-- Allocate storage for the cached `ClassGraph`, alongside the instance set it was built from. -/
+/-- Allocate storage for the cached `ClassGraph` and the instance set it was built from. -/
 initialize classGraphCacheRef :
     IO.Ref (Option (PHashMap Name Meta.InstanceEntry × ClassGraph)) ← IO.mkRef none
 
