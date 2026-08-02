@@ -293,15 +293,15 @@ def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : Consta
     let (disp, target) ← describeCandidate const c
     let msg := match gw.grade with
       | .holds { binders, body, concl } =>
-        let must := (if !concl then ["its conclusion"] else []) ++
+        let unconfirmed := (if !concl then ["its conclusion"] else []) ++
           (if !body then ["its proof"] else [])
-        let mustPart := if must.isEmpty then "" else
-          s!", but {" and ".intercalate must} may have to be modified"
+        let unconfirmedPart := if unconfirmed.isEmpty then "" else
+          s!", but {" and ".intercalate unconfirmed} may have to be modified"
         let mightPart := if binders then "" else
-          if must.isEmpty then ", but its binders might have to be modified"
+          if unconfirmed.isEmpty then ", but its binders might have to be modified"
           else ", and its binders might have to be as well"
         m!"the `{disp}` hypothesis of `{declName}` can be \
-          {target}{mustPart}{mightPart}.{caveat}"
+          {target}{unconfirmedPart}{mightPart}.{caveat}"
       -- For experiments only.
       | .unverified =>
         m!"[UNVERIFIED] the `{disp}` hypothesis of `{declName}` can be {target}."
