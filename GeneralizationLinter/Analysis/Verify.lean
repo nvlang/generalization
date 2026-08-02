@@ -165,12 +165,13 @@ public structure SourceIntact where
   binders : Bool
   /--
   `true` if the declaration's conclusion would not have to be modified after applying the weakening,
-  `false` if it (almost certainly) would.
+  `false` if it might. A `false` records that re-elaboration did not succeed, which is evidence of
+  necessity, not a proof of it.
   -/
   concl : Bool
   /--
   `true` if the declaration's body (i.e., value) wouldn't have to be modified after applying the
-  weakening, `false` if it (almost certainly) would.
+  weakening, `false` if it might. As for `concl`, a `false` records a failed re-elaboration.
   -/
   body : Bool
 deriving Inhabited, BEq

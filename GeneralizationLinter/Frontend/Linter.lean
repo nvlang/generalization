@@ -177,9 +177,11 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
       | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
       | .implicit => "{" ++ dispUnbracketed ++ "}"
       | _ => s!"[{dispUnbracketed}]"
-    -- `replaceBinderType?` is the same reification the verifier used to build this binder, so we
-    -- print the type that was actually graded rather than a restatement of it. Both fallbacks
-    -- degrade to the bare class name; neither should fire once verified.
+    -- `replaceBinderType?` is the same reification the verifier uses, but it runs here in the
+    -- _original_ context, with the strong binder still in scope, whereas `weakenedStatementType?`
+    -- runs it in the weakened context. `mkClassApp?` synthesizes the hidden instance slots against
+    -- whichever context it is given, so the two can differ there: this is the replacement's type,
+    -- not verbatim the term that was graded. Both fallbacks degrade to the bare class name.
     let render (repl : Vertex) : MetaM String := do
       let some ld := old? | return toString repl.name
       let some e ← replaceBinderType? ld.type repl | return toString repl.name
@@ -294,7 +296,7 @@ def lintTypeclassesFor (cfg : LinterConfig) (graph : ClassGraph) (const : Consta
         let must := (if !concl then ["its conclusion"] else []) ++
           (if !body then ["its proof"] else [])
         let mustPart := if must.isEmpty then "" else
-          s!", but {" and ".intercalate must} would have to be modified"
+          s!", but {" and ".intercalate must} may have to be modified"
         let mightPart := if binders then "" else
           if must.isEmpty then ", but its binders might have to be modified"
           else ", and its binders might have to be as well"
