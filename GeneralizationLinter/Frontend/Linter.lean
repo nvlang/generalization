@@ -159,7 +159,7 @@ describeCandidate const ⟨b, .split #[⟨`Mul, #[#0], .polymorphic⟩, ⟨`One,
 describeCandidate const ⟨b, .weaken ⟨`Pow, #[#0, #1], .polymorphic⟩⟩ =
   ("[Group G]", "weakened to `Pow`")
 describeCandidate const' ⟨b', .weaken ⟨`Monoid, #[#0], .polymorphic⟩⟩ =
-  ("{Group G}", "weakened to `Monoid G`")
+  ("{inst : Group G}", "weakened to `Monoid G`")
 ```
 -/
 def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (String × String) :=
@@ -172,10 +172,16 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
       | none => pure (
           if candidate.binder.className.isAnonymous then s!"⟨binder {candidate.binder.idx}⟩"
           else toString candidate.binder.className)
-    -- Targeted binder (bracketed)
+    -- Targeted binder (bracketed). An implicit or strict-implicit binder is only valid source
+    -- with its name, `{inst : Group G}` rather than `{Group G}`; instance-implicit may omit it.
+    let named := match old? with
+      | some ld =>
+        let n := ld.userName
+        s!"{if n.isAnonymous || n.isInaccessibleUserName then `_ else n} : {dispUnbracketed}"
+      | none => dispUnbracketed
     let disp := match candidate.binder.binderInfo with
-      | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
-      | .implicit => "{" ++ dispUnbracketed ++ "}"
+      | .strictImplicit => s!"⦃{named}⦄"
+      | .implicit => "{" ++ named ++ "}"
       | _ => s!"[{dispUnbracketed}]"
     -- `replaceBinderType?` is the reification the verifier uses, but it runs here on `const.type`,
     -- whereas the verifier runs it on `W`, with earlier accepted weakenings applied and, in a
