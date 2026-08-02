@@ -493,28 +493,24 @@ def sourceArg? (e : Expr) : MetaM (Option Expr) := do
   return if cands.size == 1 then cands[0]? else none
 
 
-/--
-What the collector carries: the `MIChain`s found so far, and the subterms it has already visited.
+/-
+The `MIChain`s found so far, and the subterms already visited.
 
-A proof term is a DAG, not a tree, and a heavily shared one: the declaration
-`Module.associatedPrimes.mem_associatedPrimes_of_comap_mem_associatedPrimes_of_isLocalizedModule`
-has 206391 nodes as a tree but only 4993 distinct, so without `routed`/`walked` every shared
-subterm is re-visited 41 times on average, each visit paying an `inferType` and a `whnf`.
+A proof term is a shared DAG, not a tree: one Mathlib declaration measured 206391 nodes as a tree
+against 4993 distinct, so without `routed`/`walked` each shared subterm is re-visited ~41 times,
+every visit paying an `inferType` and a `whnf`.
 
-Skipping a repeat drops the duplicate `MIChain`s it would have recorded. That is sound only because
-the consumer discards multiplicity: `mcaCandidates` folds the requirements into a `HashSet Vertex`.
-Should anything downstream come to depend on how many times a requirement was seen, these caches
-have to go.
-
-`collect` is deliberately not cached: it carries a propagating `chainHead?`, so the same subterm
-reached under a different head is a different question, and `Key` has no `Hashable` to key on.
+Skipping a repeat drops the duplicate `MIChain`s it would have recorded, which is sound only because
+`mcaCandidates` folds requirements into a `HashSet Vertex`. If anything downstream comes to depend
+on multiplicity, these caches have to go. `collect` is not cached: it carries a propagating
+`chainHead?`, and `Key` has no `Hashable` to key on.
 -/
 structure CollectState where
-  /-- The `MIChain`s collected so far. -/
+  /- The `MIChain`s collected so far. -/
   chains : Array MIChain := #[]
-  /-- Subterms `route` has already dispatched on. -/
+  /- Subterms `route` has already dispatched on. -/
   routed : Std.HashSet Expr := {}
-  /-- Subterms `walk` has already descended into. -/
+  /- Subterms `walk` has already descended into. -/
   walked : Std.HashSet Expr := {}
 
 

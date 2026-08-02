@@ -88,10 +88,6 @@ public structure LinterConfig where
   conclusionGuard : Bool := true
   redundancyGuard : Bool := true
 
-  /--
-  Whether the weakened statement must be shown to imply the original. See
-  `generalizeTypeclasses.generalityGuard`.
-  -/
   generalityGuard : Bool := true
 
 deriving Inhabited

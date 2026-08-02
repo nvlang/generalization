@@ -18,7 +18,7 @@ open Std (HashSet)
 
 /-! # Class graph cache -/
 
-/--
+/-
 Allocate storage for the result of `ClassGraph.scanInstances` on the imported instances, keyed by a
 digest of the names it scanned. `attribute [instance]`/`[-instance]` on an imported constant, and
 `open scoped`/`end` on an imported scoped instance, both change that set. Object identity is no use
@@ -33,14 +33,9 @@ initialize classGraphCacheRef :
     IO.Ref (Option (PHashMap Name Meta.InstanceEntry × ClassGraph)) ← IO.mkRef none
 
 
-/--
+/-
 Allocate storage for the `assemble` result of the case where nothing local contributes, keyed by
-`importedKey`. In that case the graph is a pure function of the imported scan, so reuse is exact and
-needs no digest of the edge array.
-
-That case is the common one and it was not cheap: declaring any local instance changes the instance
-set, so `sameInstanceSet` misses and the whole body reruns. The imported scan survives that via
-`importedScanRef`, but `assemble` did not, and almost no local instance mints a weakening edge.
+`importedKey`. The graph is then a pure function of the imported scan, so reuse is exact.
 -/
 initialize importedOnlyGraphRef : IO.Ref (Option (UInt64 × ClassGraph)) ← IO.mkRef none
 
@@ -51,29 +46,26 @@ initialize graphBuildCountRef : IO.Ref Nat ← IO.mkRef 0
 
 private unsafe def sameInstanceSetImpl (a b : PHashMap Name Meta.InstanceEntry) : Bool := ptrEq a b
 
-/--
-Do `a` and `b` denote the same instance set? Object identity is exact here, since the map is
-persistent: any change to it allocates a new one, and the cached graph keeps its map alive, so no
-address is recycled. A spurious `false` costs a rebuild, never soundness.
-
-Hashing the contents instead is not affordable. `PHashMap` has no O(1) size, so any digest is a fold
-over ~40k entries, measured at 72ms per declaration, emitting or not.
+/-
+Do `a` and `b` denote the same instance set? Object identity is exact here: the map is persistent, so
+any change allocates a new one, and the cached graph keeps its map alive. A spurious `false` costs a
+rebuild, never soundness. Hashing the contents instead is a fold over ~40k entries, measured at 72ms
+per declaration.
 -/
 @[implemented_by sameInstanceSetImpl]
 private def sameInstanceSet (_a _b : PHashMap Name Meta.InstanceEntry) : Bool := false
 
 
-/--
-Digest of an imported instance set. `xor` rather than `mixHash`, so that the digest does not depend
-on the order the names came out of the instance map.
+/-
+Digest of an imported instance set. `xor` rather than `mixHash`, so it does not depend on the order
+the names came out of the instance map.
 -/
 private def importedKey (imported : Array Name) : UInt64 :=
   mixHash (hash imported.size) (imported.foldl (init := 0) fun h n => h ^^^ hash n)
 
 
-/--
+/-
 Scan the `imported` instances and record the result in `importedScanRef` under their `importedKey`.
-The extra pass over the names is paid only on a rebuild, never per declaration.
 -/
 private def scanImported (imported : Array Name) : MetaM (Array ClassEdge × HashSet Name) := do
   let scan ← ClassGraph.scanInstances imported

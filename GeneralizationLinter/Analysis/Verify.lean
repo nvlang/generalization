@@ -42,15 +42,12 @@ public def suppressingDiagnostics {m : Type → Type} {α : Type} [Monad m] [Mon
     let savedLog ← Core.getMessageLog
     try act finally Core.setMessageLog savedLog
 
-/--
+/-
 Does the weakened statement `W` imply the original statement `origType`?
 
-A weakening is only a weakening if everything the original states still follows from it. Both
-existing gates re-synthesize the *proof* against `W`, which says the proof still goes through, not
-that `W` is more general: if rebuilding `W` drifted one of its hypotheses into a stronger
-proposition, the proof of a vacuous statement still checks out. So we apply `W` inside the
-original's context, where the original's own binders (including the strong one) are available, and
-require its conclusion to match.
+The other gates re-synthesize the proof against `W`, which shows the proof still goes through, not
+that `W` is more general. Here `W` is applied inside the original's context, where the original's
+binders are available, and its conclusion must match.
 -/
 public def weakenedImpliesOriginal (W origType : Expr) : MetaM Bool :=
   withNewMCtxDepth do
@@ -76,14 +73,11 @@ public def weakenedImpliesOriginal (W origType : Expr) : MetaM Bool :=
   catch e => if e.isRuntime then throw e else return false
 
 
-/--
-Would the weakened declaration still be admissible as an instance?
-
-The linted population includes registered `instance`s (`getTheorems` reports `instance`s of `Prop`
-classes too), and weakening or dropping a binder can leave an argument that typeclass synthesis
-cannot infer. Rather than replicate Lean's inferrability rule we run it: declare `W` in a throwaway
-environment and let `addInstance` compute the synthesization order, which is what rejects a
-"dangerous instance". Non-instances are admissible by definition.
+/-
+Would the weakened declaration still be admissible as an instance? The linted population includes
+registered `instance`s, and weakening a binder can leave an argument synthesis cannot infer. Rather
+than replicate Lean's inferrability rule, declare `W` in a throwaway environment and let
+`addInstance` compute the synthesization order. Non-instances are admissible by definition.
 -/
 public def stillAdmissibleInstance (declName : Name) (W : Expr) (levelParams : List Name) :
     MetaM Bool := do
