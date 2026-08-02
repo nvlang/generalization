@@ -77,7 +77,8 @@ public def replaceBinderType? (oldType : Expr) (replacement : Vertex) : MetaM (O
   -- `body`, and reconstruct (`mkForallFVars`) the parametric binder with the new body `body'`.
   if (← whnfR oldType).isForall then
     forallTelescopeReducing oldType fun prefixes body => do
-      let some body' ← mkClassApp? replacement.name (← keyArgs body.getAppFn body.getAppArgs) | return none
+      let some body' ← mkClassApp? replacement.name (← keyArgs body.getAppFn body.getAppArgs)
+        | return none
       some <$> mkForallFVars prefixes body'
   -- If `oldType` doesn't reduce to a parametric binder, then it's a class application.
   else do
