@@ -184,7 +184,9 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
     let render (repl : Vertex) : MetaM String := do
       let some ld := old? | return toString repl.name
       let some e ← replaceBinderType? ld.type repl | return toString repl.name
-      return toString (← Meta.ppExpr e)
+      -- reification leaves the universes it could not pin open, and a suggestion is meant to be
+      -- pasted, so print the levels the way a user would write them: not at all
+      withOptions (pp.universes.set · false) do return toString (← Meta.ppExpr e)
     let target ← match candidate.shape with
       | .drop => pure "removed (dropped)"
       | .weaken weakerVertex => pure s!"weakened to `{← render weakerVertex}`"
