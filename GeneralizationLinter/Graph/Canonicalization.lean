@@ -65,12 +65,17 @@ public def isTypeFormerConst (env : Environment) (e : Expr) : Bool :=
   | _          => false
 
 /--
-Hash of `n`'s declared type, or `0` if there is no such constant. The caches below store it beside
+Hash of `n`'s declaration, or `0` if there is no such constant. The caches below store it beside
 their value: the process outlives a file edit, so a re-elaborated declaration must not keep the
-answer computed for its old type.
+answer computed for its old one. `Expr` caches its hash, so this stays O(1).
+
+The stamp sees `n`'s own type and value, and nothing else. It does not see `n`'s reducibility, nor
+the definitions that `n`'s binder types reduce through, so a cached answer that depended on either
+can still go stale.
 -/
-public def declStamp (n : Name) : MetaM UInt64 :=
-  return ((← getEnv).find? n).map (·.type.hash) |>.getD 0
+public def declStamp (n : Name) : MetaM UInt64 := do
+  let some c := (← getEnv).find? n | return 0
+  return mixHash c.type.hash ((c.value?.map (·.hash)).getD 0)
 
 
 initialize synonymFormerCacheRef : IO.Ref (Std.HashMap Name (UInt64 × Bool)) ← IO.mkRef {}
