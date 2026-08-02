@@ -559,6 +559,10 @@ where
       | .none => return none -- no such instance, so no application to build
     if still.size == pending.size then break -- a whole pass without progress
     pending := still
+  -- `withNewMCtxDepth` restores `postponed` on the way out, so a constraint postponed in here would
+  -- be discarded rather than solved, and the universes it would have pinned would come back open.
+  -- Settle them now: a constraint our own unification cannot discharge is one we must refuse on.
+  unless ← processPostponed (mayPostpone := false) do return none
   let result ← instantiateMVars (mkAppN head margs)
   -- `hasExprMVar` is syntactic, so it rejects ambient metavariables too, not just our own.
   if result.hasExprMVar then return none
