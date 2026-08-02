@@ -472,6 +472,21 @@ def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
 
 
 /--
+Is this instance goal ready to be synthesized? Its non-`outParam` arguments must hold no unassigned
+metavariables (since `outParam` arguments are precisely the ones synthesis is expected to
+determine).
+
+`whnfR` matters here: `FunLike` is a `def` over `DFunLike`, and only the latter is registered with
+the out-parameter positions `#[1, 2]`.
+-/
+private def instanceGoalReady (ty : Expr) : MetaM Bool := do
+  let ty ← whnfR (← instantiateMVars ty)
+  let some cls := ty.getAppFn.constName? | return !ty.hasExprMVar
+  let outs := ((classExtension.getState (← getEnv)).outParamMap.find? cls).getD #[]
+  return ty.getAppArgs.zipIdx.all fun (arg, i) => outs.contains i || !arg.hasExprMVar
+
+
+/--
 ***Reifies*** a class `name` at its key arguments `vals` (see `keySlots`) into a valid `Expr`,
 wrapped as an `Option` (if `name` is not a constant defined in the environment, or if something else
 went wrong, then `none` is returned).
@@ -499,7 +514,7 @@ Note that, in constructing its output, `mkClassApp?` may perform instance synthe
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
 (instance metavariables spawned by `mkClassApp?`) via instance synthesis.
 -/
-public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) := do
+public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) :=
   -- as `mkAppOptM` does: the unification and synthesis below must not assign metavariables of the
   -- ambient context, or they leak into whatever the caller does next
   withNewMCtxDepth do
@@ -511,11 +526,23 @@ public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) :
   for i in [0:margs.size] do
     if let some v := slots[i]! then
       unless ← isDefEq margs[i]! v do return none
-  for i in [0:margs.size] do
-    if binderInfos[i]!.isInstImplicit && !(← margs[i]!.mvarId!.isAssigned) then
-      let some inst ← (try some <$> synthInstance (← instantiateMVars (← inferType margs[i]!))
-        catch _ => pure none) | return none
-      margs[i]!.mvarId!.assign inst
+  -- Instance goals are synthesized to a fixpoint rather than in binder order: a goal whose
+  -- non-`outParam` arguments are still unknown can become solvable once another goal is solved.
+  -- `mkAppOptM` synthesizes in order (`Lean/Meta/AppBuilder.lean`, `mkAppMFinal`), and so fails on
+  -- `IsLocalHom f`, where `[Monoid ?R]` precedes the `[FunLike ?F ?R ?S]` that determines `?R`.
+  let mut pending := (Array.range margs.size).filter fun i => binderInfos[i]!.isInstImplicit
+  for _ in [0:margs.size + 1] do
+    if pending.isEmpty then break
+    let mut still : Array Nat := #[]
+    for i in pending do
+      if ← margs[i]!.mvarId!.isAssigned then continue
+      let ty ← instantiateMVars (← inferType margs[i]!)
+      if ← instanceGoalReady ty then
+        let some inst ← (try some <$> synthInstance ty catch _ => pure none) | return none
+        margs[i]!.mvarId!.assign inst
+      else still := still.push i
+    if still.size == pending.size then break -- a whole pass without progress
+    pending := still
   let result ← instantiateMVars (mkAppN head margs)
   -- Both predicates are needed: `hasExprMVar` misses unassigned universe levels, and
   -- `hasAssignableMVar` misses metavariables of the ambient context, which are not assignable at
