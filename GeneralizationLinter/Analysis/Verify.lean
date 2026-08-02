@@ -42,6 +42,40 @@ public def suppressingDiagnostics {m : Type → Type} {α : Type} [Monad m] [Mon
     let savedLog ← Core.getMessageLog
     try act finally Core.setMessageLog savedLog
 
+/--
+Does the weakened statement `W` imply the original statement `origType`?
+
+A weakening is only a weakening if everything the original states still follows from it. Both
+existing gates re-synthesize the *proof* against `W`, which says the proof still goes through, not
+that `W` is more general: if rebuilding `W` drifted one of its hypotheses into a stronger
+proposition, the proof of a vacuous statement still checks out. So we apply `W` inside the
+original's context, where the original's own binders (including the strong one) are available, and
+require its conclusion to match.
+-/
+public def weakenedImpliesOriginal (W origType : Expr) : MetaM Bool :=
+  withNewMCtxDepth do
+  try
+    forallTelescope origType fun xs concl => do
+      let (margs, _, wConcl) ← forallMetaTelescope W
+      -- what the shared conclusion pins, it pins
+      unless ← isDefEq wConcl concl do return false
+      for m in margs do
+        if ← m.mvarId!.isAssigned then continue
+        let ty ← instantiateMVars (← inferType m)
+        if (← isClass? ty).isSome then
+          -- a class hypothesis must follow from the original's context, where the strong binder is
+          -- still in scope as a local instance
+          match ← (try trySynthInstance ty catch _ => pure .none) with
+          | .some inst => m.mvarId!.assign inst
+          | _ => return false
+        else
+          -- anything else must be supplied by one of the original's own binders
+          let some x ← xs.findM? (fun x => do isDefEq (← inferType x) ty) | return false
+          m.mvarId!.assign x
+      return true
+  catch e => if e.isRuntime then throw e else return false
+
+
 public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool :=
   suppressingDiagnostics do
     let some val := declInfo.value? (allowOpaque := true) | return false
@@ -455,6 +489,10 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
       -- `W` is `const` with each weakening in `ws` (i.e., possibly more than one weakening)
       -- applied.
       let some W ← weakenedStatementType? const ws | return none
+      -- `W` must actually be more general; neither gate below checks that (see
+      -- `weakenedImpliesOriginal`).
+      if cfg.generalityGuard then
+        unless ← weakenedImpliesOriginal W const.type do return none
       -- Compute weakening grade.
       let bodyG := (← recompiledAgainst? W src const.levelParams).isSome
       if !bodyG then

@@ -88,6 +88,12 @@ public structure LinterConfig where
   conclusionGuard : Bool := true
   redundancyGuard : Bool := true
 
+  /--
+  Whether the weakened statement must be shown to imply the original. See
+  `generalizeTypeclasses.generalityGuard`.
+  -/
+  generalityGuard : Bool := true
+
 deriving Inhabited
 
 
@@ -159,6 +165,13 @@ public register_option generalizeTypeclasses.conclusionGuard : Bool := {
 
 -- This option will (almost definitely) not be part of the final API. It is used for thesis
 -- experiments.
+public register_option generalizeTypeclasses.generalityGuard : Bool := {
+  defValue := true,
+  descr := "[Warning: disabling this option is experimental]. Whether the weakened statement must be
+    shown to imply the original one. The other two gates only re-synthesize the proof against the
+    weakened statement, which says the proof still goes through, not that the statement got weaker."
+}
+
 public register_option generalizeTypeclasses.redundancyGuard : Bool := {
   defValue := true,
   descr := "[Warning: disabling this option is experimental]. Whether a specific type of vacuous
@@ -192,5 +205,6 @@ public def LinterConfig.ofOptions (opts : Lean.Options) : LinterConfig :=
     verify := generalizeTypeclasses.verify.get opts,
     includeSubsumers := generalizeTypeclasses.includeSubsumers.get opts,
     conclusionGuard := generalizeTypeclasses.conclusionGuard.get opts,
-    redundancyGuard := generalizeTypeclasses.redundancyGuard.get opts
+    redundancyGuard := generalizeTypeclasses.redundancyGuard.get opts,
+    generalityGuard := generalizeTypeclasses.generalityGuard.get opts
   }
