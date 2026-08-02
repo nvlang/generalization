@@ -64,7 +64,16 @@ public def isTypeFormerConst (env : Environment) (e : Expr) : Bool :=
   | .const c _ => (env.find? c).any (·.type.getForallBody.isSort)
   | _          => false
 
-initialize synonymFormerCacheRef : IO.Ref (Std.HashMap Name Bool) ← IO.mkRef {}
+/--
+Hash of `n`'s declared type, or `0` if there is no such constant. The caches below store it beside
+their value: the process outlives a file edit, so a re-elaborated declaration must not keep the
+answer computed for its old type.
+-/
+public def declStamp (n : Name) : MetaM UInt64 :=
+  return ((← getEnv).find? n).map (·.type.hash) |>.getD 0
+
+
+initialize synonymFormerCacheRef : IO.Ref (Std.HashMap Name (UInt64 × Bool)) ← IO.mkRef {}
 
 /--
 Is `h` a "synonym type former", i.e., a former that unfolds to one of its own arguments.
@@ -78,7 +87,9 @@ isSynonymFormer `OrderDual = true
 ```
 -/
 public def isSynonymFormer (h : Name) : MetaM Bool := do
-  if let some r := (← synonymFormerCacheRef.get)[h]? then return r
+  let stamp ← declStamp h
+  if let some (s, r) := (← synonymFormerCacheRef.get)[h]? then
+    if s == stamp then return r
   let some info := (← getEnv).find? h | return false
   let r ← try
       let .defnInfo di := info | pure false
@@ -87,12 +98,12 @@ public def isSynonymFormer (h : Name) : MetaM Bool := do
         let red ← withTransparency .all (whnf app)
         pure (args.any (red == ·))
     catch _ => pure false
-  synonymFormerCacheRef.modify (·.insert h r)
+  synonymFormerCacheRef.modify (·.insert h (stamp, r))
   return r
 
 /-! ## What to keep -/
 
-initialize keySlotsCacheRef : IO.Ref (HashMap Name (Array Bool)) ← IO.mkRef {}
+initialize keySlotsCacheRef : IO.Ref (HashMap Name (UInt64 × Array Bool)) ← IO.mkRef {}
 
 /--
 Is `const`'s `i`th slot recoverable from the values of the slots `kept` still marks as kept?
@@ -153,8 +164,9 @@ fail, and which agrees with the original only under instance coherence. Instance
 out of `recoverableFrom`'s pool: their types mention the carriers, so admitting them would make each
 carrier look recoverable (pinned by its own instance argument) and drop it out of the key.
 
-`recoverableFrom` reduces, but `keySlotsCacheRef` memoizes for the life of the process, so marking a
-definition `irreducible` mid-session can leave a stale mask. No caller varies transparency today.
+`keySlotsCacheRef` memoizes by `declStamp`, so an edited declaration gets a fresh mask. Marking a
+definition `irreducible` mid-session can still leave a stale one, since `recoverableFrom` reduces
+and the stamp does not see transparency. No caller varies transparency today.
 
 ---
 **Examples**
@@ -173,7 +185,9 @@ keySlots `Submodule = #[true, true, false, false, false]
 ```
 -/
 def keySlots (head : Name) : MetaM (Array Bool) := do
-  if let some m := (← keySlotsCacheRef.get)[head]? then return m -- cache hit
+  let stamp ← declStamp head
+  if let some (s, m) := (← keySlotsCacheRef.get)[head]? then
+    if s == stamp then return m -- cache hit
   let some info := (← getEnv).find? head | return #[]
   let slots ← forallTelescope info.type fun params _ => do
     let decls ← params.mapM (·.fvarId!.getDecl)

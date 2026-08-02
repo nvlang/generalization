@@ -396,7 +396,7 @@ public def getTargetedBinders (decl : Expr) : MetaM (Array TargetedBinder) := do
         }
     return binders
 
-initialize sourceSlotCacheRef : IO.Ref (HashMap Name (Option Nat)) ← IO.mkRef {}
+initialize sourceSlotCacheRef : IO.Ref (HashMap Name (UInt64 × Option Nat)) ← IO.mkRef {}
 
 /--
 Get index of source slot for a given declaration. Doing this once for each declaration and memoizing
@@ -424,7 +424,9 @@ sourceSlot? `Pi.monoid = none -- `u` is absent from the source's type but presen
 ```
 -/
 public def sourceSlot? (fn : Name) : MetaM (Option Nat) := do
-  if let some memo := (← sourceSlotCacheRef.get)[fn]? then return memo
+  let stamp ← declStamp fn
+  if let some (s, memo) := (← sourceSlotCacheRef.get)[fn]? then
+    if s == stamp then return memo
   let some info := (← getEnv).find? fn | return none
   let verdict ← forallTelescopeReducing info.type fun args concl => do
     -- If conclusion isn't class-typed, then `fn` isn't even a transformation. Example: `map_one`
@@ -446,7 +448,7 @@ public def sourceSlot? (fn : Name) : MetaM (Option Nat) := do
     for j in [0:i] do
       others := collectLevelParams others (← inferType args[j]!)
     return if unpinned.any others.params.contains then none else some i
-  sourceSlotCacheRef.modify (·.insert fn verdict)
+  sourceSlotCacheRef.modify (·.insert fn (stamp, verdict))
   return verdict
 
 
