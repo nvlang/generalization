@@ -530,6 +530,9 @@ where
       let concl' ← ctx.reSynthExpr ctx.concl
       if mentions ctx.stale concl' then return none
       let type ← instantiateMVars (← mkForallFVars ctx.weakenedTelescope concl')
-      if type.hasLooseBVars || type.hasExprMVar || mentions ctx.stale type then return none
+      -- `hasLevelMVar` alongside the rest: a universe the statement does not pin is one the user
+      -- cannot write down, and grading it would let the proof assign whatever made the check pass
+      if type.hasLooseBVars || type.hasExprMVar || type.hasLevelMVar
+        || mentions ctx.stale type then return none
       unless ← isTypeCorrect type do return none
       return some type
