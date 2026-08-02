@@ -120,8 +120,9 @@ argument reaching a call site carries whatever type it happens to have, not the 
 declares, so a former that unfolds away its argument leaves the metavariable unassigned, while one
 that cannot unfold still pins it.
 
-Only a _later_ slot can pin slot `i`, since a binder's type mentions only the binders before it. So
-`kept` withholds the instance-implicit slots, plus any later slot `keySlots` has already dropped.
+`kept` withholds the instance-implicit slots and every slot already dropped. Withholding an earlier
+slot cannot change the answer, since only a later slot can pin slot `i`: a binder's type, even after
+`whnf`, mentions only the binders before it.
 
 ---
 **Examples**
@@ -496,8 +497,9 @@ def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
 
 /--
 ***Reifies*** a class `name` at its key arguments `vals` (see `keySlots`) into a valid `Expr`,
-wrapped as an `Option` (if `name` is not a constant defined in the environment, or if something else
-went wrong, then `none` is returned).
+wrapped as an `Option` (`none` if `name` is not a constant defined in the environment, or if the
+application could not be built). Note that a synthesis exception propagates rather than becoming
+`none`.
 
 ---
 **Example**
@@ -515,8 +517,8 @@ linter needs to construct the weakened binder's type, `Module S A`. To do this, 
 This in turn then computes the key of `Algebra S A` (which has `subst = #[S, A]`), and then calls
 ``reifyKey? `Module #[.bvar 0, .bvar 1] #[S, A]``, which then calls ``mkClassApp? `Module #[S, A]``,
 which will in turn output the `Expr` corresponding to `Module S A` (wrapped
-as an `Option`; if `` `Module `` were not a constant defined in the environment, or if something
-else went wrong, then `mkClassApp?` would return `none`).
+as an `Option`; if `` `Module `` were not a constant defined in the environment, `mkClassApp?`
+would return `none`).
 
 Note that, in constructing its output, `mkClassApp?` may perform instance synthesis: in the ``
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
