@@ -8,6 +8,7 @@ module
 public import Lean.Meta.Basic
 public import GeneralizationLinter.Graph.Vertex
 import Lean.Meta.AppBuilder
+import Lean.Meta.AbstractMVars
 
 open Lean Meta
 
@@ -514,10 +515,16 @@ Note that, in constructing its output, `mkClassApp?` may perform instance synthe
 `Module `` example, it's actually constructing `@Module S A ?i₁ ?i₂`, and finds `?i₁` and `?i₂`
 (instance metavariables spawned by `mkClassApp?`) via instance synthesis.
 -/
-public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) :=
+public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) := do
   -- as `mkAppOptM` does: the unification and synthesis below must not assign metavariables of the
   -- ambient context, or they leak into whatever the caller does next
-  withNewMCtxDepth do
+  let some abst ← withNewMCtxDepth build | return none
+  -- `withNewMCtxDepth` restores the whole metavariable context on exit, so `build` hands back its
+  -- leftover universes as parameters; reopening turns them into metavariables the caller owns.
+  return some (← openAbstractMVarsResult abst).2.2
+where
+  /-- The application itself, built one metavariable depth down. -/
+  build : MetaM (Option AbstractMVarsResult) := do
   let mask ← keySlots name
   let some slots := placeAtSlots? mask vals | return none
   let some (head, sig) ← freshHeadAndSig? name | return none
@@ -544,11 +551,13 @@ public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) :
     if still.size == pending.size then break -- a whole pass without progress
     pending := still
   let result ← instantiateMVars (mkAppN head margs)
-  -- Both predicates are needed: `hasExprMVar` misses unassigned universe levels, and
-  -- `hasAssignableMVar` misses metavariables of the ambient context, which are not assignable at
-  -- the depth `withNewMCtxDepth` put us at.
-  if result.hasExprMVar || (← hasAssignableMVar result) then return none
-  if (← isClass? result).isSome then return some result else return none
+  -- `hasExprMVar` is syntactic, so it rejects ambient metavariables too, not just our own.
+  if result.hasExprMVar then return none
+  unless (← isClass? result).isSome do return none
+  -- A universe the key arguments do not pin stays open: in `Small.{u, v} (α : Type v)` the argument
+  -- fixes `v`, not `u`. The caller pins it later, but it must not outlive this depth, so abstract
+  -- it. `abstractMVars` parametrizes the universes minted here and leaves ambient ones alone.
+  return some (← abstractMVars result)
 
 
 /--
