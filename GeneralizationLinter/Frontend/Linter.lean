@@ -177,11 +177,10 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
       | .strictImplicit => s!"⦃{dispUnbracketed}⦄"
       | .implicit => "{" ++ dispUnbracketed ++ "}"
       | _ => s!"[{dispUnbracketed}]"
-    -- `replaceBinderType?` is the same reification the verifier uses, but it runs here in the
-    -- _original_ context, with the strong binder still in scope, whereas `weakenedStatementType?`
-    -- runs it in the weakened context. `mkClassApp?` synthesizes the hidden instance slots against
-    -- whichever context it is given, so the two can differ there: this is the replacement's type,
-    -- not verbatim the term that was graded. Both fallbacks degrade to the bare class name.
+    -- `replaceBinderType?` is the reification the verifier uses, but it runs here on `const.type`,
+    -- whereas the verifier runs it on `W`, with earlier accepted weakenings applied and, in a
+    -- split, with replacements `0..i-1` in scope. So this is the replacement's type, not verbatim
+    -- the term that was graded. Both fallbacks degrade to the bare class name.
     let render (repl : Vertex) : MetaM String := do
       let some ld := old? | return toString repl.name
       let some e ← replaceBinderType? ld.type repl | return toString repl.name
