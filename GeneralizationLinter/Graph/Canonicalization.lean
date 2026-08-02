@@ -104,8 +104,8 @@ argument reaching a call site carries whatever type it happens to have, not the 
 — so a former that unfolds away its argument leaves the metavariable unassigned, while one that
 cannot unfold still pins it.
 
-Restricting to `kept` is what makes the mask self-supporting: a slot must be recoverable from what
-actually survives, not from another slot that is itself about to be dropped.
+Only a _later_ slot can pin slot `i`, since a binder's type mentions only the binders before it. So
+`kept` withholds the instance-implicit slots, plus any later slot `keySlots` has already dropped.
 
 ---
 **Examples**
@@ -153,6 +153,9 @@ fail, and which agrees with the original only under instance coherence. Instance
 out of `recoverableFrom`'s pool: their types mention the carriers, so admitting them would make each
 carrier look recoverable — pinned by its own instance argument — and drop it out of the key.
 
+`recoverableFrom` reduces, but `keySlotsCacheRef` memoizes for the life of the process, so marking a
+definition `irreducible` mid-session can leave a stale mask. No caller varies transparency today.
+
 ---
 **Examples**
 
@@ -183,12 +186,12 @@ def keySlots (head : Name) : MetaM (Array Bool) := do
       | .strictImplicit => 0 | .implicit => 1 | _ => 2
     let order := (Array.range params.size).qsort fun a b =>
       if visibility a == visibility b then a < b else visibility a < visibility b
-    let mut keep := decls.map (!·.binderInfo.isInstImplicit)
+    let mut kept := decls.map (!·.binderInfo.isInstImplicit)
     for i in order do
-      unless keep[i]! do continue
-      if ← try recoverableFrom info decls keep i catch _ => pure false then
-        keep := keep.set! i false
-    return keep
+      unless kept[i]! do continue
+      if ← try recoverableFrom info decls kept i catch _ => pure false then
+        kept := kept.set! i false
+    return kept
   keySlotsCacheRef.modify (·.insert head slots) -- cache result
   return slots
 
@@ -518,10 +521,11 @@ where
   for i in [0:margs.size] do
     if let some v := slots[i]! then
       unless ← isDefEq margs[i]! v do return none
-  -- Instance goals are synthesized to a fixpoint rather than in binder order: a goal whose
-  -- non-`outParam` arguments are still unknown can become solvable once another goal is solved.
-  -- `mkAppOptM` synthesizes in order (`Lean/Meta/AppBuilder.lean`, `mkAppMFinal`), and so fails on
-  -- `IsLocalHom f`, where `[Monoid ?R]` precedes the `[FunLike ?F ?R ?S]` that determines `?R`.
+  -- Instance goals are discharged to a fixpoint, not in binder order: `outParam` lets a goal be
+  -- determined by one declared after it, so binder order need not be a topological order of that
+  -- dependency. This is the elaborator's own discipline (`synthesizeSyntheticMVarsStep`), whereas
+  -- `mkAppOptM` assumes binder order will serve (`mkAppMFinal`). A pass that resolves nothing ends
+  -- the loop, leaving metavariables the guard below rejects.
   let mut pending := (Array.range margs.size).filter fun i => binderInfos[i]!.isInstImplicit
   for _ in [0:margs.size + 1] do
     if pending.isEmpty then break
