@@ -179,8 +179,8 @@ def describeCandidate (const : ConstantInfo) (candidate : Candidate) : MetaM (St
       | _ => s!"[{dispUnbracketed}]"
     -- `replaceBinderType?` is the reification the verifier uses, but it runs here on `const.type`,
     -- whereas the verifier runs it on `W`, with earlier accepted weakenings applied and, in a
-    -- split, with replacements `0..i-1` in scope. So this is the replacement's type, not verbatim
-    -- the term that was graded. Both fallbacks degrade to the bare class name.
+    -- split, with replacements `0` to `i - 1` in scope. So this is the replacement's type, not
+    -- verbatim the term that was graded. Both fallbacks degrade to the bare class name.
     let render (repl : Vertex) : MetaM String := do
       let some ld := old? | return toString repl.name
       let some e ← replaceBinderType? ld.type repl | return toString repl.name

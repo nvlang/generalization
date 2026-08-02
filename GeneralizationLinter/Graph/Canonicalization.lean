@@ -99,10 +99,10 @@ Is `const`'s `i`th slot recoverable from the values of the slots `kept` still ma
 
 We answer by running the recovery rather than predicting it: unify each kept binder's type, taken in
 normal form, against a fully-metavariable copy of `const`'s telescope, and report whether slot `i`'s
-metavariable came out assigned. Normal form is what makes this a test rather than a tautology — an
-argument reaching a call site carries whatever type it happens to have, not the one `const` declares
-— so a former that unfolds away its argument leaves the metavariable unassigned, while one that
-cannot unfold still pins it.
+metavariable came out assigned. Normal form is what makes this a test rather than a tautology: an
+argument reaching a call site carries whatever type it happens to have, not the one `const`
+declares, so a former that unfolds away its argument leaves the metavariable unassigned, while one
+that cannot unfold still pins it.
 
 Only a _later_ slot can pin slot `i`, since a binder's type mentions only the binders before it. So
 `kept` withholds the instance-implicit slots, plus any later slot `keySlots` has already dropped.
@@ -148,10 +148,10 @@ Instance implicit slots are always dropped, while other slots are dropped only i
 recoverable from the values of the kept slots.
 
 The two drops rest on different grounds: a non-instance slot is dropped because unification recovers
-it (see `recoverableFrom`), an instance slot because `mkClassApp?` re-synthesizes it — which can
+it (see `recoverableFrom`), an instance slot because `mkClassApp?` re-synthesizes it, which can
 fail, and which agrees with the original only under instance coherence. Instance slots are also kept
 out of `recoverableFrom`'s pool: their types mention the carriers, so admitting them would make each
-carrier look recoverable — pinned by its own instance argument — and drop it out of the key.
+carrier look recoverable (pinned by its own instance argument) and drop it out of the key.
 
 `recoverableFrom` reduces, but `keySlotsCacheRef` memoizes for the life of the process, so marking a
 definition `irreducible` mid-session can leave a stale mask. No caller varies transparency today.
@@ -192,7 +192,7 @@ def keySlots (head : Name) : MetaM (Array Bool) := do
       if ← try recoverableFrom info decls kept i catch _ => pure false then
         kept := kept.set! i false
     return kept
-  keySlotsCacheRef.modify (·.insert head slots) -- cache result
+  keySlotsCacheRef.modify (·.insert head (stamp, slots)) -- cache result
   return slots
 
 
@@ -464,7 +464,7 @@ Returns `none` if `name` isn't in the environment.
 
 The fresh universe level metavariables are what enable us to reify a universe-polymorphic class
 without having to pin its levels prematurely. Note that reification is handed only a class name, a
-`pattern` and a `subst` — never a `Vertex.levels` tag — so we have to add levels to `name` in some
+`pattern` and a `subst`, never a `Vertex.levels` tag, so we have to add levels to `name` in some
 way anyhow, and we're just choosing not to give it arbitrarily pinned levels, but rather
 giving it fresh level metavariables and letting downstream unification pin them if and where
 necessary.
@@ -491,7 +491,7 @@ theorem thm.{w} {S : Type 0} {A : Type w} [CommSemiring S] [Semiring A] [Algebra
 ```
 
 To know what exactly it'd be suggesting (e.g., so that it can verify said suggestion candidate), the
-linter needs to construct `Module S A` somehow — the weakened binder's type. To do this, it calls
+linter needs to construct the weakened binder's type, `Module S A`. To do this, it calls
 `replaceBinderType?` with `Algebra S A` as an `Expr` and the replacement `Vertex` for `Module S A`.
 This in turn then computes the key of `Algebra S A` (which has `subst = #[S, A]`), and then calls
 ``reifyKey? `Module #[.bvar 0, .bvar 1] #[S, A]``, which then calls ``mkClassApp? `Module #[S, A]``,
