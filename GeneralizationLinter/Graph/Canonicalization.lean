@@ -473,21 +473,6 @@ def freshHeadAndSig? (name : Name) : MetaM (Option (Expr × Expr)) := do
 
 
 /--
-Is this instance goal ready to be synthesized? Its non-`outParam` arguments must hold no unassigned
-metavariables (since `outParam` arguments are precisely the ones synthesis is expected to
-determine).
-
-`whnfR` matters here: `FunLike` is a `def` over `DFunLike`, and only the latter is registered with
-the out-parameter positions `#[1, 2]`.
--/
-private def instanceGoalReady (ty : Expr) : MetaM Bool := do
-  let ty ← whnfR (← instantiateMVars ty)
-  let some cls := ty.getAppFn.constName? | return !ty.hasExprMVar
-  let outs := ((classExtension.getState (← getEnv)).outParamMap.find? cls).getD #[]
-  return ty.getAppArgs.zipIdx.all fun (arg, i) => outs.contains i || !arg.hasExprMVar
-
-
-/--
 ***Reifies*** a class `name` at its key arguments `vals` (see `keySlots`) into a valid `Expr`,
 wrapped as an `Option` (if `name` is not a constant defined in the environment, or if something else
 went wrong, then `none` is returned).
@@ -543,11 +528,10 @@ where
     let mut still : Array Nat := #[]
     for i in pending do
       if ← margs[i]!.mvarId!.isAssigned then continue
-      let ty ← instantiateMVars (← inferType margs[i]!)
-      if ← instanceGoalReady ty then
-        let some inst ← (try some <$> synthInstance ty catch _ => pure none) | return none
-        margs[i]!.mvarId!.assign inst
-      else still := still.push i
+      match ← trySynthInstance (← inferType margs[i]!) with
+      | .some inst => margs[i]!.mvarId!.assign inst
+      | .undef => still := still.push i -- stuck on metavariables; a later goal may unstick it
+      | .none => return none -- no such instance, so no application to build
     if still.size == pending.size then break -- a whole pass without progress
     pending := still
   let result ← instantiateMVars (mkAppN head margs)
