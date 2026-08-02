@@ -493,8 +493,33 @@ def sourceArg? (e : Expr) : MetaM (Option Expr) := do
   return if cands.size == 1 then cands[0]? else none
 
 
+/--
+What the collector carries: the `MIChain`s found so far, and the subterms it has already visited.
+
+A proof term is a DAG, not a tree, and a heavily shared one: the declaration
+`Module.associatedPrimes.mem_associatedPrimes_of_comap_mem_associatedPrimes_of_isLocalizedModule`
+has 206391 nodes as a tree but only 4993 distinct, so without `routed`/`walked` every shared
+subterm is re-visited 41 times on average, each visit paying an `inferType` and a `whnf`.
+
+Skipping a repeat drops the duplicate `MIChain`s it would have recorded. That is sound only because
+the consumer discards multiplicity: `mcaCandidates` folds the requirements into a `HashSet Vertex`.
+Should anything downstream come to depend on how many times a requirement was seen, these caches
+have to go.
+
+`collect` is deliberately not cached: it carries a propagating `chainHead?`, so the same subterm
+reached under a different head is a different question, and `Key` has no `Hashable` to key on.
+-/
+structure CollectState where
+  /-- The `MIChain`s collected so far. -/
+  chains : Array MIChain := #[]
+  /-- Subterms `route` has already dispatched on. -/
+  routed : Std.HashSet Expr := {}
+  /-- Subterms `walk` has already descended into. -/
+  walked : Std.HashSet Expr := {}
+
+
 /-- State monad to keep track of the `MIChain`s we've collected. -/
-abbrev CollectM := StateRefT (Array MIChain) MetaM
+abbrev CollectM := StateRefT CollectState MetaM
 
 
 /--
@@ -623,6 +648,8 @@ Decide what to do with `e`:
 -/
 partial def route (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
+  if (← get).routed.contains e then return
+  modify fun st => { st with routed := st.routed.insert e }
   if (← isClass? (← inferType e)).isSome then collect binderIdOf e none
   else walk binderIdOf e
 
@@ -650,7 +677,7 @@ partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
   if let .fvar fvarId := fn then
     if let some root := binderIdOf.get? fvarId then
       let app ← chainHead?.getDM do canonKey (← whnf (← inferType e))
-      modify (·.push { head := app, root }) -- record `MIChain`
+      modify fun st => { st with chains := st.chains.push { head := app, root } }
       for arg in args do route binderIdOf arg -- args may contain more chains still
       return
   -- Not an application ⟹ no arguments to route through. Call `walk` instead.
@@ -679,6 +706,8 @@ partial def collect (binderIdOf : HashMap FVarId BinderId) (e : Expr)
 /-- Find any spot in `e` where the elaborator put an instance transformation or root instance. -/
 partial def walk (binderIdOf : HashMap FVarId BinderId) (e : Expr) :
     CollectM Unit := do
+  if (← get).walked.contains e then return
+  modify fun st => { st with walked := st.walked.insert e }
   match e with
   | .app .. =>
     -- See `unfoldInternalHead?`.
@@ -719,8 +748,8 @@ public def getMIChains (binders : Array TargetedBinder) (decl proof : Expr) :
       for x in xs do walk binderIdOf (← x.fvarId!.getType)
       walk binderIdOf concl
       walk binderIdOf (← Core.betaReduce (mkAppN proof xs))
-    let (_, chains) ← go.run #[]
-    return chains
+    let (_, st) ← go.run (CollectState.mk #[] {} {})
+    return st.chains
 
 
 /--
