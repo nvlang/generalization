@@ -33,6 +33,18 @@ initialize classGraphCacheRef :
     IO.Ref (Option (PHashMap Name Meta.InstanceEntry × ClassGraph)) ← IO.mkRef none
 
 
+/--
+Allocate storage for the `assemble` result of the case where nothing local contributes, keyed by
+`importedKey`. In that case the graph is a pure function of the imported scan, so reuse is exact and
+needs no digest of the edge array.
+
+That case is the common one and it was not cheap: declaring any local instance changes the instance
+set, so `sameInstanceSet` misses and the whole body reruns. The imported scan survives that via
+`importedScanRef`, but `assemble` did not, and almost no local instance mints a weakening edge.
+-/
+initialize importedOnlyGraphRef : IO.Ref (Option (UInt64 × ClassGraph)) ← IO.mkRef none
+
+
 /-- For debugging: counts how many times `cachedClassGraph` has rebuilt the graph. -/
 initialize graphBuildCountRef : IO.Ref Nat ← IO.mkRef 0
 
@@ -96,8 +108,19 @@ public def cachedClassGraph : MetaM ClassGraph := do
     -- Filter out constants that aren't instances.
     if instances.contains name then names.push name else names
   let (localEdges, localSubHeads) ← ClassGraph.scanInstances localNames
+  -- Nothing local contributes: no local edge, and no subsingleton head the imported scan did not
+  -- already carry. Then `assemble`'s inputs are exactly the imported ones, so its result is a pure
+  -- function of `importedKey` and the previously assembled graph is still right.
+  let importedOnly := localEdges.isEmpty
+    && localSubHeads.fold (init := true) fun acc h => acc && importedSubHeads.contains h
+  if importedOnly then
+    if let some (key, G) := ← importedOnlyGraphRef.get then
+      if key == importedKey imported then
+        classGraphCacheRef.set (some (instances, G))
+        return G
   let G ← ClassGraph.assemble (importedEdges ++ localEdges)
     (localSubHeads.fold (init := importedSubHeads) (·.insert ·))
+  if importedOnly then importedOnlyGraphRef.set (some (importedKey imported, G))
   graphBuildCountRef.modify (· + 1)
   classGraphCacheRef.set (some (instances, G))
   return G
