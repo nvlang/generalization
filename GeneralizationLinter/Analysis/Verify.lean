@@ -107,8 +107,12 @@ def refuseConclusionAssumers (conclK? : Option Key) (candidates : Array Candidat
   -- weakenings are limited to typeclass weakenings.
   | none => candidates
   -- If conclusion is a class app, check if any replacement matches the conclusion. If so, drop
-  -- candidate.
-  | some conclK => candidates.filter fun c => c.replacements.all (· != conclK.toVertex)
+  -- candidate. Graph vertices are universe-polymorphic while a monomorphic conclusion canonicalizes
+  -- to `.concrete`, so we compare against both forms, as `Vertex.witnesses` does when querying.
+  | some conclK =>
+    let concl := conclK.toVertex
+    let conclPoly := { concl with levels := .polymorphic }
+    candidates.filter fun c => c.replacements.all fun r => r != concl && r != conclPoly
 
 
 /--
