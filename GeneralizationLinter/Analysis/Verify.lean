@@ -212,8 +212,9 @@ public def guardedCandidates (config : LinterConfig) (G : ClassGraph) (declInfo 
 
 public structure SourceIntact where
   /--
-  `true` if the declaration's binders wouldn't have to be modified after applying the weakening,
-  `false` if they _might_ have to be modified.
+  `true` if no other binder mentions the weakened binder by name, `false` if one does. Note that
+  this is a syntactic scan (`bindersMention`), not a re-elaboration: it does not see a binder whose
+  type the elaborator filled in from the weakened one.
   -/
   binders : Bool
   /--
@@ -464,6 +465,13 @@ withHeartbeatBudget 0 dflt x                 -- `x` gets what is left of the amb
 withHeartbeatBudget 1_000 dflt x             -- `x` gets a fresh 1_000 heartbeats
 ```
 -/
+/-
+Set when a heartbeat budget is exhausted. Without it a truncated declaration is indistinguishable
+from a declined one: both report no emissions. Cleared per declaration by the linter.
+-/
+public initialize budgetExhaustedRef : IO.Ref Bool ← IO.mkRef false
+
+
 public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
     TermElabM α := do
   if budget == 0 then return ← x
@@ -473,7 +481,7 @@ public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermE
     (withTheReader Core.Context (fun c => { c with maxHeartbeats := effectiveMax })
       -- `withCurrHeartbeats` resets the heartbeat budget. #TODO
       (withCurrHeartbeats x))
-    (fun _ => pure dflt)
+    (fun _ => do budgetExhaustedRef.set true; pure dflt)
 
 public structure GradedWeakening where
   candidate : Candidate

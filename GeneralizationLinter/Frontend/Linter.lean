@@ -382,6 +382,7 @@ public def generalizeTypeclasses : Linter where
           unless declIdMatches declCmd thm.name do continue
           -- Stats
           let statsOn := generalizeTypeclasses.stats.get (← getOptions)
+          budgetExhaustedRef.set false
           let h0 ← IO.getNumHeartbeats
           let (outcome, emits) : Stats.Outcome × Array Json ←
             if let some graph := graph? then
@@ -403,6 +404,7 @@ public def generalizeTypeclasses : Linter where
                 ("heartbeats", toJson hb),
                 ("outcome", outcome.toJson),
                 ("suppressed", toJson tcSuppressed),
+                ("truncated", toJson (← budgetExhaustedRef.get)),
                 ("emits", Json.arr emits)]).compress}"
 
 
