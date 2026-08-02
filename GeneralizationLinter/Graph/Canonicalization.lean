@@ -91,39 +91,51 @@ public def isSynonymFormer (h : Name) : MetaM Bool := do
 
 /-! ## What to keep -/
 
-/--
-Tries to return `true` iff `fvar` is recoverable from `e`, i.e., iff `e` "pins" `fvar`. Here, `e :
-Expr` is the type of a binder, stripped of gadgets (`outParam` & co.).
+initialize keySlotsCacheRef : IO.Ref (HashMap Name (Array Bool)) ← IO.mkRef {}
 
-**Note:**
-* If `false` is returned, it doesn't guarantee that `fvar` is _not_ recoverable.
-* If `true` is returned, it doesn't guarantee that `fvar` _is_ recoverable: descending into
-  `f a₁ … aₙ` assumes `f` is injective in each `aᵢ`, which holds for inductive formers but not for
-  constants that can unfold. Example: given `(X Y : C) (f : X ⟶ Y)` we return `true` for both `X`
-  and `Y`, since both occur in `@Quiver.Hom C _ X Y` — yet `Quiver.Hom` is a projection, and in a
-  category whose hom-types are all `PUnit`, `f`'s type pins neither.
+/--
+Is `const`'s `i`th slot recoverable from the values of the slots `kept` still marks as kept?
+
+We answer by running the recovery rather than predicting it: unify each kept binder's type, taken in
+normal form, against a fully-metavariable copy of `const`'s telescope, and report whether slot `i`'s
+metavariable came out assigned. Normal form is what makes this a test rather than a tautology — an
+argument reaching a call site carries whatever type it happens to have, not the one `const` declares
+— so a former that unfolds away its argument leaves the metavariable unassigned, while one that
+cannot unfold still pins it.
+
+Restricting to `kept` is what makes the mask self-supporting: a slot must be recoverable from what
+actually survives, not from another slot that is itself about to be dropped.
 
 ---
 **Examples**
 
+Writing `recoverableFrom C i` for the call on `C`'s own telescope with every non-instance slot kept:
+
 ```
-recoverableFrom ‹α → α → Prop› α = true
-recoverableFrom ‹Type› α = false
--- `F` a free variable
-recoverableFrom ‹F α› α = false
+-- structure Subtype {α : Sort u} (p : α → Prop)
+recoverableFrom `Subtype 0 = true     -- `p`'s type `α → Prop` pins `α`
+recoverableFrom `Subtype 1 = false    -- no other binder's type mentions `p`
+-- class IsPreorder (α : Sort*) (r : α → α → Prop)
+recoverableFrom `IsPreorder 0 = true  -- same shape: the relation pins the carrier
+-- class Module (R M : Type*) [Semiring R] [AddCommMonoid M]
+recoverableFrom `Module 0 = false     -- only `[Semiring R]` mentions `R`, and `kept` excludes it
 ```
 -/
-partial def recoverableFrom (e : Expr) (fvar : FVarId) : Bool :=
-  match e with
-  | .forallE _ binderType body _ => recoverableFrom binderType fvar || recoverableFrom body fvar
-  | _ =>
-    if e == .fvar fvar then true
-    else
-      if e.getAppFn.isConst then
-        e.getAppArgs.any (recoverableFrom · fvar)
-      else false -- the safe default
+private def recoverableFrom (const : ConstantInfo) (binders : Array LocalDecl)
+    (kept : Array Bool) (i : Nat) : MetaM Bool :=
+  -- the unification below assigns metavariables; keep those assignments off the ambient context
+  withNewMCtxDepth do
+  let (mvars, _, _) ← forallMetaTelescope const.type
+  let some mvᵢ := mvars[i]? | return false
+  for j in [0:binders.size] do
+    -- only slots that survive may be used to recover slot `i`; a slot that is itself about to be
+    -- dropped cannot be what makes another one droppable
+    if j == i || !kept[j]! then continue
+    let some mv := mvars[j]? | return false
+    -- Note that `isDefEq` assigns mvars via unification.
+    unless ← isDefEq (← inferType mv) (← whnf binders[j]!.type.cleanupAnnotations) do return false
+  return !(← instantiateMVars mvᵢ).isMVar -- did the unification solve slot `i`?
 
-initialize keySlotsCacheRef : IO.Ref (HashMap Name (Array Bool)) ← IO.mkRef {}
 
 /--
 Given a head constant `head`, return a boolean mask `#[b₁ … bₙ]` (`bᵢ : Bool`) such that `bᵢ` is
@@ -133,6 +145,12 @@ not only for classes, but for all kinds of type formers.
 
 Instance implicit slots are always dropped, while other slots are dropped only if their values are
 recoverable from the values of the kept slots.
+
+The two drops rest on different grounds: a non-instance slot is dropped because unification recovers
+it (see `recoverableFrom`), an instance slot because `mkClassApp?` re-synthesizes it — which can
+fail, and which agrees with the original only under instance coherence. Instance slots are also kept
+out of `recoverableFrom`'s pool: their types mention the carriers, so admitting them would make each
+carrier look recoverable — pinned by its own instance argument — and drop it out of the key.
 
 ---
 **Examples**
@@ -155,20 +173,20 @@ def keySlots (head : Name) : MetaM (Array Bool) := do
   let some info := (← getEnv).find? head | return #[]
   let slots ← forallTelescope info.type fun params _ => do
     let decls ← params.mapM (·.fvarId!.getDecl)
-    let binderInfos : Array BinderInfo := decls.map (·.binderInfo)
-    -- binder types with gadgets (outParam & co.) removed.
-    let binderTypes : Array Expr := decls.map (·.type.cleanupAnnotations)
-    let mut keep : Array Bool := #[]
-    for i in [0:params.size] do
-      if binderInfos[i]!.isInstImplicit then
-        keep := keep.push false -- instance implicit params are always dropped
-      else
-        -- explicit, implicit, or strict implicit params: drop only if recoverable from the type of
-        -- a non-instance-implicit binder that follows it in the telescope.
-        let fvar := params[i]!.fvarId!
-        let recoverable := (List.range params.size).any fun j =>
-          j > i && !binderInfos[j]!.isInstImplicit && recoverableFrom binderTypes[j]! fvar
-        keep := keep.push !recoverable -- keep params that we're not sure are recoverable
+    -- Instance implicit params are always dropped; the rest start kept and are dropped in turn.
+    -- The order decides only which of two mutually recoverable slots survives, since dropping one
+    -- takes it out of the pool the remaining tests draw on. Testing the least visible binders first
+    -- lets an explicit slot win such a tie: those are the arguments a reader writes at a use site,
+    -- so they are the ones worth keeping in the key.
+    let visibility (i : Nat) : Nat := match decls[i]!.binderInfo with
+      | .strictImplicit => 0 | .implicit => 1 | _ => 2
+    let order := (Array.range params.size).qsort fun a b =>
+      if visibility a == visibility b then a < b else visibility a < visibility b
+    let mut keep := decls.map (!·.binderInfo.isInstImplicit)
+    for i in order do
+      unless keep[i]! do continue
+      if ← try recoverableFrom info decls keep i catch _ => pure false then
+        keep := keep.set! i false
     return keep
   keySlotsCacheRef.modify (·.insert head slots) -- cache result
   return slots
