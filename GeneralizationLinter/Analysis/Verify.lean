@@ -76,6 +76,27 @@ public def weakenedImpliesOriginal (W origType : Expr) : MetaM Bool :=
   catch e => if e.isRuntime then throw e else return false
 
 
+/--
+Would the weakened declaration still be admissible as an instance?
+
+The linted population includes registered `instance`s (`getTheorems` reports `instance`s of `Prop`
+classes too), and weakening or dropping a binder can leave an argument that typeclass synthesis
+cannot infer. Rather than replicate Lean's inferrability rule we run it: declare `W` in a throwaway
+environment and let `addInstance` compute the synthesization order, which is what rejects a
+"dangerous instance". Non-instances are admissible by definition.
+-/
+public def stillAdmissibleInstance (declName : Name) (W : Expr) (levelParams : List Name) :
+    MetaM Bool := do
+  unless ← isInstance declName do return true
+  withoutModifyingEnv do
+    try
+      let probe := declName ++ `_glAdmissibilityProbe
+      addDecl (.axiomDecl { name := probe, levelParams, type := W, isUnsafe := false })
+      Meta.addInstance probe .global ((← getInstancePriority? declName).getD 1000)
+      return true
+    catch e => if e.isRuntime then throw e else return false
+
+
 public def weakeningHolds (declInfo : ConstantInfo) (c : Candidate) : MetaM Bool :=
   suppressingDiagnostics do
     let some val := declInfo.value? (allowOpaque := true) | return false
@@ -493,6 +514,8 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
       -- `weakenedImpliesOriginal`).
       if cfg.generalityGuard then
         unless ← weakenedImpliesOriginal W const.type do return none
+      -- a weakened `instance` must still admit as one, or the printed edit does not compile
+      unless ← stillAdmissibleInstance const.name W const.levelParams do return none
       -- Compute weakening grade.
       let bodyG := (← recompiledAgainst? W src const.levelParams).isSome
       if !bodyG then
