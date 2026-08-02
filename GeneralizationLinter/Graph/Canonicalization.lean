@@ -482,6 +482,9 @@ Note that, in constructing its output, `mkClassApp?` may perform instance synthe
 (instance metavariables spawned by `mkClassApp?`) via instance synthesis.
 -/
 public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) := do
+  -- as `mkAppOptM` does: the unification and synthesis below must not assign metavariables of the
+  -- ambient context, or they leak into whatever the caller does next
+  withNewMCtxDepth do
   let mask ← keySlots name
   let some slots := placeAtSlots? mask vals | return none
   let some (head, sig) ← freshHeadAndSig? name | return none
@@ -496,7 +499,10 @@ public def mkClassApp? (name : Name) (vals : Array Expr) : MetaM (Option Expr) :
         catch _ => pure none) | return none
       margs[i]!.mvarId!.assign inst
   let result ← instantiateMVars (mkAppN head margs)
-  if result.hasExprMVar then return none
+  -- Both predicates are needed: `hasExprMVar` misses unassigned universe levels, and
+  -- `hasAssignableMVar` misses metavariables of the ambient context, which are not assignable at
+  -- the depth `withNewMCtxDepth` put us at.
+  if result.hasExprMVar || (← hasAssignableMVar result) then return none
   if (← isClass? result).isSome then return some result else return none
 
 
@@ -611,7 +617,10 @@ withGenericClassApp `Nat.succ k = none
 ```
 -/
 public def withGenericClassApp {α} (name : Name) (k : Expr → Expr → MetaM (Option α)) :
-    MetaM (Option α) := do
+    MetaM (Option α) :=
+  -- the fresh level metavariables minted below, and whatever `k` assigns while inspecting the
+  -- generic application, must not escape into the ambient context
+  withNewMCtxDepth do
   -- `head` is `name` with universe levels, i.e., `name.{…}`.
   let some (head, sig) ← freshHeadAndSig? name | return none
   forallTelescopeReducing (whnfType := true) sig fun params body => do
