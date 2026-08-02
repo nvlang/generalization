@@ -19,56 +19,62 @@ open Std (HashSet)
 /-! # Class graph cache -/
 
 /--
-Allocate storage for the result of `ClassGraph.scanInstances` on the imported instances, keyed by
-the number of instances that were imported when it was computed. Without a key the scan would
-outlive the instance set it describes: `attribute [instance]`/`[-instance]` on an imported constant,
-and `open scoped`/`end` activating or deactivating an imported scoped instance, all change which
-imported instances synthesis can use.
+Allocate storage for the result of `ClassGraph.scanInstances` on the imported instances, keyed by a
+digest of the names it scanned. `attribute [instance]`/`[-instance]` on an imported constant, and
+`open scoped`/`end` on an imported scoped instance, both change that set. Object identity is no use
+here, unlike in `sameInstanceSet`: the array is rebuilt on every graph build.
 -/
-initialize importedScanRef : IO.Ref (Option (Nat × Array ClassEdge × HashSet Name)) ← IO.mkRef none
+initialize importedScanRef :
+    IO.Ref (Option (UInt64 × Array ClassEdge × HashSet Name)) ← IO.mkRef none
 
 
-/-- Allocate storage for the cached `ClassGraph`. -/
-initialize classGraphCacheRef : IO.Ref (Option (UInt64 × ClassGraph)) ← IO.mkRef none
+/-- Allocate storage for the cached `ClassGraph`, alongside the instance set it was built from. -/
+initialize classGraphCacheRef :
+    IO.Ref (Option (PHashMap Name Meta.InstanceEntry × ClassGraph)) ← IO.mkRef none
 
 
 /-- For debugging: counts how many times `cachedClassGraph` has rebuilt the graph. -/
 initialize graphBuildCountRef : IO.Ref Nat ← IO.mkRef 0
 
 
+private unsafe def sameInstanceSetImpl (a b : PHashMap Name Meta.InstanceEntry) : Bool := ptrEq a b
+
 /--
-Compute fingerprint of the instances available for synthesis, for cache invalidation.
+Do `a` and `b` denote the same instance set? Object identity is exact here, since the map is
+persistent: any change to it allocates a new one, and the cached graph keeps its map alive, so no
+address is recycled. A spurious `false` costs a rebuild, never soundness.
 
-The fold covers local instance declarations. `instanceNames.size` is mixed in on top of it because
-the fold alone is blind to anything that changes the *imported* half of the instance set:
-`attribute [instance]`/`[-instance]` on an imported constant, and `open scoped`/`end` activating or
-deactivating an imported scoped instance, all move the cardinality while leaving the fold's value
-untouched. Only an exactly-compensating add-and-remove escapes both.
+Hashing the contents instead is not affordable. `PHashMap` has no O(1) size, so any digest is a fold
+over ~40k entries, measured at 72ms per declaration, emitting or not.
 -/
-public def localInstanceFingerprint : MetaM UInt64 := do
-  let env ← getEnv
-  let instances := (instanceExtension.getState env).instanceNames
-  let local' := env.constants.map₂.foldl (init := (7 : UInt64)) fun h name const =>
-    -- `name` is the name of a local constant, and `const` is the `ConstantInfo` associated with it.
-    if instances.contains name then mixHash h (mixHash name.hash const.type.hash) else h
-  -- `PHashMap` has no O(1) size, so this is a fold; it is one cheap pass over ~40k names
-  let count := instances.foldl (init := 0) fun (n : Nat) _ _ => n + 1
-  return mixHash local' (hash count)
+@[implemented_by sameInstanceSetImpl]
+private def sameInstanceSet (_a _b : PHashMap Name Meta.InstanceEntry) : Bool := false
 
 
-/-- Cached class graph. -/
-private def scanImported (imported : Array Name) :
-    MetaM (Array ClassEdge × HashSet Name) := do
+/--
+Digest of an imported instance set. `xor` rather than `mixHash`, so that the digest does not depend
+on the order the names came out of the instance map.
+-/
+private def importedKey (imported : Array Name) : UInt64 :=
+  mixHash (hash imported.size) (imported.foldl (init := 0) fun h n => h ^^^ hash n)
+
+
+/--
+Scan the `imported` instances and record the result in `importedScanRef` under their `importedKey`.
+The extra pass over the names is paid only on a rebuild, never per declaration.
+-/
+private def scanImported (imported : Array Name) : MetaM (Array ClassEdge × HashSet Name) := do
   let scan ← ClassGraph.scanInstances imported
-  importedScanRef.set (some (imported.size, scan.1, scan.2))
+  importedScanRef.set (some (importedKey imported, scan.1, scan.2))
   return scan
 
 
+/-- Cached class graph. -/
 public def cachedClassGraph : MetaM ClassGraph := do
-  let fp ← localInstanceFingerprint
-  if let some (fp', G) := ← classGraphCacheRef.get then
-    if fp' == fp then return G
   let env ← getEnv
+  let instances := (instanceExtension.getState env).instanceNames
+  if let some (instances', G) := ← classGraphCacheRef.get then
+    if sameInstanceSet instances' instances then return G
   -- Only instances can produce edges. We enforce this restriction because the linter targets
   -- non-explicit binders for weakening, and non-explicit binders are resolved either using instance
   -- synthesis, or unification with instance synthesis as a fallback. So, when we analyze a
@@ -76,15 +82,14 @@ public def cachedClassGraph : MetaM ClassGraph := do
   -- the weakened version we suggest can also be resolved, which is guaranteed (-ish) when there's a
   -- path in the class graph from the stronger to the weaker class, precisely because each edge of
   -- the class graph corresponds to an instance that instance synthesis can actually make use of.
-  let instances := (instanceExtension.getState env).instanceNames
   -- The expensive stuff: Scan imported environment.
   let imported := instances.foldl (init := (#[] : Array Name)) fun names name _ =>
     -- Filter out local constants.
     if env.constants.map₂.contains name then names else names.push name
   let (importedEdges, importedSubHeads) ← do
-    -- reuse the previous scan only if the imported instance set is still the same size
-    if let some (n, edges, subHeads) := ← importedScanRef.get then
-      if n == imported.size then pure (edges, subHeads) else scanImported imported
+    -- reuse the previous scan only if the imported instance set is unchanged
+    if let some (key, edges, subHeads) := ← importedScanRef.get then
+      if key == importedKey imported then pure (edges, subHeads) else scanImported imported
     else scanImported imported
   -- The less expensive stuff: Scan local environment.
   let localNames := env.constants.map₂.foldl (init := (#[] : Array Name)) fun names name _ =>
@@ -94,5 +99,5 @@ public def cachedClassGraph : MetaM ClassGraph := do
   let G ← ClassGraph.assemble (importedEdges ++ localEdges)
     (localSubHeads.fold (init := importedSubHeads) (·.insert ·))
   graphBuildCountRef.modify (· + 1)
-  classGraphCacheRef.set (some (fp, G))
+  classGraphCacheRef.set (some (instances, G))
   return G
