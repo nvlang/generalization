@@ -298,9 +298,7 @@ public def recompiledAgainst? (W : Expr) (src : DeclSource) (levelNames : List N
             | _ => 0
           -- ∀-arity of conclusion.
           let k := min (foralls c) ys.size
-          -- ∀-arity = 0 ⟹ we don't need to worry about `Meta.forallBoundedTelescope` having to stop
-          -- telescoping at any point.
-          return if k == 0 then none else some (ys.size - k)
+          return some (ys.size - k)
       -- As before, a timeout here shouldn't be taken to mean that "the body would have to be
       -- modified".
       catch e => if e.isRuntime then throw e else return none
