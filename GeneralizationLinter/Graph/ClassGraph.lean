@@ -290,6 +290,10 @@ public def extractEdge? (name : Name) : MetaM (Option ClassEdge) := do
     -- `pattern := #[.bvar 0]` and `subst := #[α → Prop]`. We reject these kinds of key args for
     -- now, but plan on supporting them in the future.
     unless srcK.subst.all (·.isFVar) && tgtK.subst.all (·.isFVar) do return none
+    -- Until we actually encode rearrangements of key arguments in graph edges, don't mint edges
+    -- from instance mappings where key arguments get rearranged.
+    unless (Array.range tgtK.subst.size).all (fun i => srcK.subst[i]? == some tgtK.subst[i]!) do
+      return none
     return some { src := srcK.toVertex, tgt := tgtK.toVertex }
 
 
