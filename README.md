@@ -58,3 +58,4 @@ website](https://nvlang.github.io/generalization/docs/) that was generated autom
 
 I used generative artificial intelligence (AI) while working on this project, primarily Anthropic's
 Claude Fable 5, Opus 5, Opus 4.8, Opus 4.7, and Opus 4.6 models.
+(Note that a commit not mentioning AI as a co-author does not mean that AI was not involved in said commit.)
