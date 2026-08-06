@@ -186,7 +186,7 @@ keySlots `IsWellFounded = #[false, true]
 keySlots `Submodule = #[true, true, false, false, false]
 ```
 -/
-def keySlots (head : Name) : MetaM (Array Bool) := do
+public def keySlots (head : Name) : MetaM (Array Bool) := do
   let stamp ← declStamp head
   if let some (s, m) := (← keySlotsCacheRef.get)[head]? then
     if s == stamp then return m -- cache hit
