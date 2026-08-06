@@ -1,0 +1,75 @@
+{
+  "segments": [
+    {
+      "started": "2026-08-05T10:12:00+00:00",
+      "modules": 8257,
+      "jobs": 16,
+      "threads": 2,
+      "timeout_s": 1800.0,
+      "memory_ceiling_gib": 62.79,
+      "configs_requested": [
+        "no_verify+allow",
+        "no_verify+forbid",
+        "no_verify+prefer",
+        "verify+allow",
+        "verify+forbid",
+        "verify+prefer"
+      ]
+    }
+  ],
+  "options": {
+    "pp.unicode.fun": "true",
+    "autoImplicit": "false",
+    "maxSynthPendingDepth": "3",
+    "weak.linter.mathlibStandardSet": "true",
+    "weak.linter.style.header": "true",
+    "weak.linter.checkInitImports": "true",
+    "weak.linter.allScriptsDocumented": "true",
+    "weak.linter.pythonStyle": "true",
+    "weak.linter.style.longFile": "1500",
+    "weak.linter.generalizeTypeclasses": "true",
+    "weak.generalizeTypeclasses.stats": "true",
+    "weak.generalizeTypeclasses.generationHeartbeats": "20000000",
+    "weak.generalizeTypeclasses.perCandidateHeartbeats": "20000000"
+  },
+  "grid": {
+    "no_verify+forbid": {
+      "weak.generalizeTypeclasses.verify": "false",
+      "weak.generalizeTypeclasses.splitPolicy": "forbid"
+    },
+    "no_verify+allow": {
+      "weak.generalizeTypeclasses.verify": "false",
+      "weak.generalizeTypeclasses.splitPolicy": "allow"
+    },
+    "no_verify+prefer": {
+      "weak.generalizeTypeclasses.verify": "false",
+      "weak.generalizeTypeclasses.splitPolicy": "prefer"
+    },
+    "verify+forbid": {
+      "weak.generalizeTypeclasses.verify": "true",
+      "weak.generalizeTypeclasses.splitPolicy": "forbid"
+    },
+    "verify+allow": {
+      "weak.generalizeTypeclasses.verify": "true",
+      "weak.generalizeTypeclasses.splitPolicy": "allow"
+    },
+    "verify+prefer": {
+      "weak.generalizeTypeclasses.verify": "true",
+      "weak.generalizeTypeclasses.splitPolicy": "prefer"
+    }
+  },
+  "excluded": [
+    "Mathlib/Lean/Elab/InfoTree.lean",
+    "Mathlib/Lean/Environment.lean",
+    "Mathlib/Lean/Expr/Basic.lean",
+    "Mathlib/Tactic/Linter/DirectoryDependency.lean",
+    "Mathlib/Tactic/Linter/Header.lean",
+    "Mathlib/Tactic/Widget/CommDiag.lean",
+    "Mathlib/Tactic/Widget/StringDiagram.lean"
+  ],
+  "provenance": {
+    "toolchain": "leanprover/lean4:v4.32.1",
+    "mathlib_rev": "520045ab14e26149ee970e2e617ca04b09bde5d6",
+    "linter_revision": "4b74e47dc7d87c448a37249b8509bb0de66c0f98"
+  }
+}
