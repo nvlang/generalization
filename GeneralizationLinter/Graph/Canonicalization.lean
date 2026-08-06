@@ -15,7 +15,7 @@ open Lean Meta
 namespace GeneralizationLinter
 
 /-!
-# Canonicalization
+# Keys, Canonicalization, and Reification
 
 This module is responsible for converting class applications of any kind into `Vertex`s or `Key`s,
 which is the process we refer to as ***canonicalization***, and back, which we refer to as
@@ -102,7 +102,7 @@ public def isSynonymFormer (h : Name) : MetaM Bool := do
   synonymFormerCacheRef.modify (·.insert h (stamp, r))
   return r
 
-/-! ## What to keep -/
+/-! ## Key Arguments -/
 
 initialize keySlotsCacheRef : IO.Ref (HashMap Name (UInt64 × Array Bool)) ← IO.mkRef {}
 
@@ -287,7 +287,7 @@ public def natLitOf? : Expr → Option Nat
       if ty.isConstOf ``Nat then some n else none
     | _ => none
 
-/-! ## Anti-Unification -/
+/-! ## Canonicalization -/
 
 /--
 As we walk an `Expr` (generally, a telescope), this monad helps us keep track of
