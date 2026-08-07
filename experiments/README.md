@@ -1,5 +1,8 @@
 # Reproducing the sweep
 
+> [!NOTE] 
+> **Disclosure:** This README was written by AI.
+
 ```bash
 docker build --build-arg GL_REVISION="$(git rev-parse HEAD)" -t gl-repro -f experiments/Dockerfile .
 mkdir -p out && docker run --rm -v "$PWD/out:/out" gl-repro
