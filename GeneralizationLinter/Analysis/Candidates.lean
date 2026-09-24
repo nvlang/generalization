@@ -448,38 +448,44 @@ def MCAContext.reusesKeyArgsOf (_ctx : MCAContext) (b : TargetedBinder) (v : Ver
 /--
 What might we replace `b` with, given that `b` requires (or, more accurately, uses) `reqVerts`?
 
-This returns
-* `some #[]` to indicate that `b` could be dropped altogether,
-* `some #[mca]` to indicate that `b` could be replaced by `mca`,
-* `some #[mca₁, …, mcaₙ]` to indicate that `b` could be split up into `mca₁`, …, `mcaₙ`, or
-* `none` to indicate that `b` can't be weakened within `ctx.graph` under the constraints defined by
-  `ctx.splitPolicy`, `ctx.absencePolicy`, and `ctx.includeSubsumers`.
+Returns the possible replacements in order of preference, each of which is
+* `#[]` to indicate that `b` could be dropped altogether,
+* `#[mca]` to indicate that `b` could be replaced by `mca`, or
+* `#[mca₁, …, mcaₙ]` to indicate that `b` could be split up into `mca₁`, …, `mcaₙ`.
+
+The result is empty if `b` can't be weakened within `ctx.graph` under the constraints defined by
+`ctx.splitPolicy`, `ctx.absencePolicy`, and `ctx.includeSubsumers`.
+
+A replacement found in the class graph can still fail verification, so every replacement that
+`ctx.splitPolicy` permits is returned rather than only the preferred one: under `.allow`, the split
+is the fallback for the single class, and under `.prefer`, the single class is the fallback for the
+split.
 -/
-def MCAContext.replacement? (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
-    Option (Array Vertex) :=
-  if reqVerts.isEmpty then some #[] else
+def MCAContext.replacements (ctx : MCAContext) (b : TargetedBinder) (reqVerts : Array Vertex) :
+    Array (Array Vertex) :=
+  if reqVerts.isEmpty then #[#[]] else
   let singleClass? : Option Vertex :=
     (ctx.minCommonAncestor? b reqVerts).filter (ctx.strictlyStrongerThan b)
+  let single := singleClass?.toArray.map (#[·])
   match ctx.splitPolicy with
-  | .forbid => singleClass?.map (#[·])
-  | .allow =>
-    match singleClass? with
-    | some mca => some #[mca]
-    | none => ctx.mcasPartition? b reqVerts
+  | .forbid => single
+  | .allow => single ++ (ctx.mcasPartition? b reqVerts).toArray
   | .prefer =>
     match ctx.mcasPartition? b reqVerts, singleClass? with
     | some mcas, some mca =>
       -- If any of the `mcaᵢ` is stronger than or equipotent to `mca`, then there's no point in
       -- splitting `b` up, so we just return `#[mca]` in that case.
-      some (if mcas.all (fun mcaᵢ => ¬ ctx.reachesWitnessed mcaᵢ mca) then mcas else #[mca])
-    | some mcas, none => some mcas
-    | none, some mca => some #[mca]
-    | none, none => none
+      if mcas.all (fun mcaᵢ => ¬ ctx.reachesWitnessed mcaᵢ mca) then #[mcas, #[mca]]
+      else #[#[mca]]
+    | some mcas, none => #[mcas]
+    | none, _ => single
 
 
 /--
 Return a (possibly empty) array of candidate weakenings for any of the targeted binders `binders`
-such that the requirements `reqs` are still satisfied.
+such that the requirements `reqs` are still satisfied. A binder may get several candidates, which
+then appear consecutively and in order of preference (see `MCAContext.replacements`); at most one of
+them should be accepted.
 -/
 public def mcaCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
     (reqs : Array Requirement) (cfg : LinterConfig := {}) (includeSubsumers : Bool := true) :
@@ -490,22 +496,23 @@ public def mcaCandidates (graph : ClassGraph) (binders : Array TargetedBinder)
   for b in binders do
     let bReqVerts : HashSet Vertex := reqs.foldl (init := {}) fun bReqVerts' req =>
       if req.binder.id == b.id then bReqVerts'.insert req.toVertex else bReqVerts'
-    let some mcas := ctx.replacement? b (ctx.filterReqVerts b bReqVerts) | continue
+    let options := ctx.replacements b (ctx.filterReqVerts b bReqVerts)
+    if options.isEmpty then continue
     -- Subsumption can sometimes lead to key args getting "modified": for example, `α` in the
     -- targeted binder becoming `αᵒᵖ` in the weakening candidate. Sometimes this can be genuinely
     -- desirable, but most of the time it's not, so, for the time being, we just try again with
     -- subsumption off if we are met with such a situation.
-    let mcas :=
-      if mcas.all (ctx.reusesKeyArgsOf b) then
-        mcas
+    let options :=
+      if options.all (·.all (ctx.reusesKeyArgsOf b)) then
+        options
       else
         let ctxOff := { ctx with includeSubsumers := false }
-        match ctxOff.replacement? b (ctxOff.filterReqVerts b bReqVerts) with
-        | some alt => if alt.all (ctxOff.reusesKeyArgsOf b) then alt else mcas
-        | none => mcas
-    let shape := match mcas with
-      | #[] => WeakeningShape.drop
-      | #[mca] => WeakeningShape.weaken mca
-      | mcas => WeakeningShape.split mcas
-    out := out.push { binder := b, shape }
+        let alt := ctxOff.replacements b (ctxOff.filterReqVerts b bReqVerts)
+        if !alt.isEmpty && alt.all (·.all (ctxOff.reusesKeyArgsOf b)) then alt else options
+    for mcas in options do
+      let shape := match mcas with
+        | #[] => WeakeningShape.drop
+        | #[mca] => WeakeningShape.weaken mca
+        | mcas => WeakeningShape.split mcas
+      out := out.push { binder := b, shape }
   return out

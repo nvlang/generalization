@@ -503,6 +503,9 @@ public def gradedWeakenings (cfg : LinterConfig) (graph : ClassGraph) (const : C
   let mut accepted : Array (Nat × Array Vertex) := #[]
   let mut graded : Array GradedWeakening := #[]
   for candidate in candidates do
+    -- A binder's candidates come in order of preference (see `mcaCandidates`), so a later one is
+    -- only a fallback for an earlier one that failed.
+    if accepted.any (·.1 == candidate.binder.idx) then continue
     let ws := accepted.push (candidate.binder.idx, candidate.replacements)
     let g? ← withHeartbeatBudget cfg.perCandidateHeartbeats none do
       -- For experimental ablation measurements only.
