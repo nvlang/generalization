@@ -440,16 +440,24 @@ public def bindersMention (binders : Array Syntax) (name : Name) : Bool :=
         !name.isAnonymous && s.getId.eraseMacroScopes.getRoot == name)).isSome
 
 
+/-
+Set when a heartbeat budget is exhausted. Without it a truncated declaration is indistinguishable
+from a declined one: both report no emissions. Cleared per declaration by the linter.
+-/
+public initialize budgetExhaustedRef : IO.Ref Bool ← IO.mkRef false
+
+
 /--
 Run `x` with `maxHeartbeats` set to the lesser of `budget` and the ambient `maxHeartbeats`, treating
-an ambient value of `0` ("unlimited") as larger than any `budget`. In either case `x` runs under
-`withCurrHeartbeats`, so it gets a fresh allowance of that many heartbeats rather than whatever is
-left of the ambient one.
+a value of `0` ("unlimited") as larger than any other. So a `budget` of `0` lifts only the linter's
+own limit: the ambient one still applies. `x` runs under `withCurrHeartbeats`, so it gets a fresh
+allowance of that many heartbeats rather than whatever is left of the ambient one.
 
-If a runtime (or other non-interrupt) exception occurs while running `x`, it is caught and `dflt`
-("default") is returned.
+If a runtime (or other non-interrupt) exception occurs while running `x`, it is caught,
+`budgetExhaustedRef` is set, and `dflt` ("default") is returned.
 
-If `budget` is `0`, runs `x` directly without any restrictions or exception handling.
+If both `budget` and the ambient `maxHeartbeats` are `0`, runs `x` directly without any restrictions
+or exception handling.
 
 ---
 **Examples**
@@ -458,23 +466,18 @@ If `budget` is `0`, runs `x` directly without any restrictions or exception hand
 -- ambient `maxHeartbeats 200_000`, i.e. `Core.Context.maxHeartbeats = 200_000_000`
 withHeartbeatBudget 1_000 dflt x             -- `x` gets a fresh 1_000 heartbeats
 withHeartbeatBudget 1_000_000_000_000 dflt x -- `x` gets a fresh 200_000_000 heartbeats
-withHeartbeatBudget 0 dflt x                 -- `x` gets what is left of the ambient allowance
+withHeartbeatBudget 0 dflt x                 -- `x` gets a fresh 200_000_000 heartbeats
 -- ambient `maxHeartbeats 0`
 withHeartbeatBudget 1_000 dflt x             -- `x` gets a fresh 1_000 heartbeats
+withHeartbeatBudget 0 dflt x                 -- `x` runs unrestricted
 ```
 -/
-/-
-Set when a heartbeat budget is exhausted. Without it a truncated declaration is indistinguishable
-from a declined one: both report no emissions. Cleared per declaration by the linter.
--/
-public initialize budgetExhaustedRef : IO.Ref Bool ← IO.mkRef false
-
-
 public def withHeartbeatBudget {α : Type} (budget : Nat) (dflt : α) (x : TermElabM α) :
     TermElabM α := do
-  if budget == 0 then return ← x
   let ambient := (← readThe Core.Context).maxHeartbeats
-  let effectiveMax := if ambient == 0 then budget else min budget ambient
+  let effectiveMax :=
+    if budget == 0 then ambient else if ambient == 0 then budget else min budget ambient
+  if effectiveMax == 0 then return ← x
   tryCatchRuntimeEx
     (withTheReader Core.Context (fun c => { c with maxHeartbeats := effectiveMax })
       -- `withCurrHeartbeats` resets the heartbeat budget. #TODO
