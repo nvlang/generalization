@@ -330,8 +330,7 @@ public def generalizeTypeclasses : Linter where
   -- of the `open B in` between them. So `peelWrappers?` still needs to handle `set_option`s as
   -- well.
   run := withSetOptionIn fun cmd => do
-    -- `declCmd` is `cmd` with all the leading `set_option … in`, `open … in`, `omit … in`, and
-    -- `include … in` removed; see `peelWrappers?`.
+    -- `declCmd` is `cmd` with all supported `… in` wrappers removed; see `peelWrappers?`.
     let some (wrappers, declCmd) := peelWrappers? cmd | return
     let some effectiveOpts ← wrapperEffectiveOptions? wrappers | return
     let lintOpts ← Command.withScope (fun s => { s with opts := effectiveOpts }) getLinterOptions
@@ -370,7 +369,8 @@ public def generalizeTypeclasses : Linter where
         let src : DeclSource := {
           body := bodyStx,
           concl? := conclStx,
-          binders := (declSig?.map (·[0].getArgs)).getD #[] ++ sectionBinders
+          binders := (declSig?.map (·[0].getArgs)).getD #[] ++ sectionBinders ++
+            wrapperBinders wrappers
         }
         -- Build class graph (or fetch it from cache).
         let graph? ← if !tcSuppressed then

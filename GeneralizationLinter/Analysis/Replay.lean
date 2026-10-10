@@ -15,7 +15,7 @@ namespace GeneralizationLinter
 
 /--
 Classification of a "declaration wrapper" (the `…` of a `… in ‹decl›` command), telling the linter
-whether to "replay" it, ignore it, or refuse to lint the wrapped declaration.
+whether to replay it, collect its binders, ignore it, or refuse to lint the wrapped declaration.
 -/
 public inductive WrapperClassification where
   /--
@@ -23,6 +23,12 @@ public inductive WrapperClassification where
   verdict. These are `open … in` and `set_option … in` commands.
   -/
   | replayable
+  /--
+  `variable … in` wrappers contribute binder source syntax. Their local variables are reconstructed
+  from the elaborated declaration's telescope during verification, rather than by replaying the
+  original (possibly stronger) hypotheses around the weakened term.
+  -/
+  | binders
   /--
   "Declaration wrappers" that we can ignore, because they don't affect our linter's verdict (in the
   case of `omit`, it's merely that they are relatively unlikely to affect our linter's verdict "in
@@ -45,7 +51,7 @@ public inductive WrapperClassification where
   /--
   "Declaration wrappers" that we cannot replay, and which may affect our linter's verdict. When a
   declaration is wrapped with one or more of these kinds of wrappers, we skip it. Any wrappers that
-  are not `.replayable` or `.ignorable` are treated as `.refused`.
+  are not `.replayable`, `.binders`, or `.ignorable` are treated as `.refused`.
   -/
   | refused
 deriving Inhabited, BEq
@@ -68,6 +74,7 @@ Classify "wrappers".
 ```
 classifyWrapper ‹open Nat› = .replayable
 classifyWrapper ‹set_option pp.all true› = .replayable
+classifyWrapper ‹variable [Monoid M]› = .binders
 classifyWrapper ‹include x› = .ignorable
 classifyWrapper ‹omit [Inhabited α]› = .ignorable
 classifyWrapper ‹attribute [simp] Nat.add› = .refused
@@ -76,6 +83,7 @@ classifyWrapper ‹attribute [simp] Nat.add› = .refused
 public def classifyWrapper (w: Syntax) : WrapperClassification :=
   match w.getKind with
   | ``Parser.Command.open | ``Parser.Command.set_option => .replayable
+  | ``Parser.Command.variable => .binders
   | ``Parser.Command.include
   -- Note: when `acceptOmits` is `false` (default), then `omit`s are not actually treated as
   -- ignorable.
@@ -100,8 +108,8 @@ public partial def hasOmitWrapper (stx : Syntax) : Bool :=
   else (stx.getArg 0).getKind == ``Parser.Command.omit || hasOmitWrapper (stx.getArg 2)
 
 /--
-Peel any `open … in`, `set_option … in`, `include … in …`, and `omit … in …` "wrappers" off of the
-main declaration. For example, if `stx` was
+Peel any `open … in`, `set_option … in`, `variable … in`, `include … in …`, and `omit … in …`
+"wrappers" off of the main declaration. For example, if `stx` was
 
 ```
 open Nat in
@@ -117,11 +125,9 @@ those returned; this is because we either ignore `omit`s entirely or, if `accept
 
 If the declaration includes any other wrappers (e.g. `attribute … in …`), return `none`. This is
 because `peelWrappers?`'s output is passed on to `rewrapTerm` to get rewrapped into a _term_ instead
-of a command or declaration (which would be much harder to deal with further down the line), and
-`open` and `set_option` are the only wrappers of this kind that are available in `Parser.Term`.
-
-There's >2000 declarations in Mathlib v4.32.1 that use wrappers that lead `peelWrappers?` to return
-`none` (which in turn prevents the linter from being able to emit any suggestions).
+of a command or declaration (which would be much harder to deal with further down the line).
+`open` and `set_option` have term counterparts; `variable` wrappers are retained for
+`wrapperBinders`, but are not replayed around terms.
 
 ---
 **Example**
@@ -194,10 +200,20 @@ public partial def peelWrappers? (stx : Syntax) (wrappers : Array Syntax := #[])
   else if stx.getKind == ``Parser.Command.in then
     let w := stx.getArg 0
     match classifyWrapper w with
-    | .replayable => peelWrappers? (stx.getArg 2) (wrappers.push w)
+    | .replayable | .binders => peelWrappers? (stx.getArg 2) (wrappers.push w)
     | .ignorable => peelWrappers? (stx.getArg 2) wrappers
     | .refused => none
   else none
+
+
+/--
+Collect the binder source syntax introduced by `variable … in` wrappers, in source order. Together
+with the ambient section binders and declaration binders, this lets verification detect explicit
+references to a hypothesis that would have to change when that hypothesis is weakened.
+-/
+public def wrapperBinders (wrappers : Array Syntax) : Array Syntax :=
+  wrappers.flatMap fun w =>
+    if w.isOfKind ``Parser.Command.variable then w[1].getArgs else #[]
 
 
 /--
@@ -296,6 +312,9 @@ public def bodyTermOfDeclVal? (dval : Syntax) : TermElabM (Option Syntax) := do
 
 /--
 Syntactically "rewrap" a term with the replayable previously peeled wrappers.
+`variable` wrappers contribute to `wrapperBinders` instead: verification reconstructs local
+variables from the weakened declaration's telescope, so replaying the original binders here would
+reintroduce the hypotheses being weakened.
 
 ---
 **Example**
@@ -331,13 +350,15 @@ into the `Syntax` tree
 -/
 public def rewrapTerm (wrappers : Array Syntax) (stx : Syntax) : Syntax :=
   wrappers.foldr (init := stx) fun w body =>
-    let kind := match w.getKind with
-      | ``Parser.Command.open => ``Parser.Term.open
-      | ``Parser.Command.set_option => ``Parser.Term.set_option
+    match w.getKind with
+      | ``Parser.Command.variable => body
+      | ``Parser.Command.open =>
+        mkNode ``Parser.Term.open (w.getArgs ++ #[mkAtom "in", body])
+      | ``Parser.Command.set_option =>
+        mkNode ``Parser.Term.set_option (w.getArgs ++ #[mkAtom "in", body])
       -- Should be unreachable.
       | k => panic! s!"`rewrapTerm`: unexpected wrapper kind `{k}` \
-          (`peelWrappers?` should only collect `open`/`set_option`)"
-    mkNode kind (w.getArgs ++ #[mkAtom "in", body])
+          (`peelWrappers?` should only collect `open`/`set_option`/`variable`)"
 
 
 /--
